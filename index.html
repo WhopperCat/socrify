@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Socrify — Beta</title>
-<link rel="icon" type="image/svg+xml" href="https://f005.backblazeb2.com/file/socrify/socrify-logo-static.svg" />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiMyNTYzZWIiLz48dGV4dCB4PSIzMiIgeT0iNDQiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJNb250c2VycmF0LHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iNDIiIGZvbnQtd2VpZ2h0PSI4MDAiIGZpbGw9IiNmZmYiPlM8L3RleHQ+PGNpcmNsZSBjeD0iNDgiIGN5PSI0NiIgcj0iMyIgZmlsbD0iI2ZmZiIvPjwvc3ZnPg==" />
 <meta name="description" content="The AI tutor that never gives you the answer." />
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -35,6 +35,13 @@
     SUPABASE_URL: 'https://yjdbrvzdldygbfvxrzbg.supabase.co',
     SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_TXKs_ObMBWyGXaAhjWYNIw_y6c8vI7p',
   };
+
+  // Apply saved theme synchronously before paint so dark mode doesn't flash light.
+  try {
+    if (localStorage.getItem('socrify_theme') === 'dark') {
+      document.documentElement.classList.add('dark');
+    }
+  } catch (e) {}
 </script>
 
 <style>
@@ -202,10 +209,31 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ===== CONFIG =====
 const CFG = window.SOCRIFY_CONFIG;
 const PROXY_ENDPOINT = '/.netlify/functions/chat';
-const LOGO_STATIC = 'https://f005.backblazeb2.com/file/socrify/socrify-logo-static.svg';
-const LOGO_ANIMATED = 'https://f005.backblazeb2.com/file/socrify/socrify-logo-animated.svg';
 
-const supa = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_PUBLISHABLE_KEY);
+const supa = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_PUBLISHABLE_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    storage: window.localStorage,
+    storageKey: 'socrify-auth',
+  },
+});
+
+// Inline SVG logo — no external dependency, themes with the app via var(--accent).
+function Logo({ className = 'w-8 h-8', animated = false }) {
+  return (
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"
+         className={`${className} ${animated ? 'pulse-soft' : ''}`} aria-hidden="true">
+      <rect x="0" y="0" width="64" height="64" rx="14" style={{ fill: 'var(--accent)' }} />
+      <text x="32" y="44" textAnchor="middle"
+            style={{ fill: '#ffffff', fontFamily: 'Montserrat, system-ui, sans-serif', fontSize: '42px', fontWeight: 800 }}>
+        S
+      </text>
+      <circle cx="48" cy="46" r="3" style={{ fill: '#ffffff' }} />
+    </svg>
+  );
+}
 
 // Supabase Auth requires email — we synthesize one from the username.
 // Real email is stored separately if the user provides one for password reset.
@@ -429,7 +457,7 @@ function App() {
 function LoadingScreen() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center">
-      <img src={LOGO_ANIMATED} alt="" className="w-20 h-20" />
+      <Logo className="w-20 h-20" animated />
       <p className="mt-4 text-muted text-sm">Loading…</p>
     </div>
   );
@@ -440,7 +468,7 @@ function TopBar({ left, right, compact = false }) {
   return (
     <header className={`flex items-center justify-between px-6 ${compact ? 'py-3' : 'py-4'} border-b border-app surface`}>
       <div className="flex items-center gap-3">
-        <img src={LOGO_STATIC} alt="" className="w-8 h-8" />
+        <Logo className="w-8 h-8" />
         <span className="font-bold text-lg tracking-tight">Socrify</span>
         <span className="text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-full surface-2 text-muted">BETA</span>
         {left}
@@ -479,7 +507,7 @@ function Landing({ onSignIn, onGuest, settingsProps }) {
     <div className="min-h-screen flex flex-col">
       <TopBar right={<SettingsCluster {...settingsProps} />} />
       <main className="flex-1 max-w-3xl mx-auto px-6 py-16 sm:py-24 text-center">
-        <img src={LOGO_STATIC} alt="" className="w-20 h-20 mx-auto mb-8" />
+        <Logo className="w-20 h-20 mx-auto mb-8" />
         <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight mb-5 leading-[1.1]">
           The AI tutor that <span style={{ color: 'var(--accent)' }}>never gives you the answer.</span>
         </h1>
@@ -534,7 +562,12 @@ function Auth({ onBack }) {
       const fakeEmail = usernameToEmail(username);
       if (mode === 'signin') {
         const { error } = await supa.auth.signInWithPassword({ email: fakeEmail, password });
-        if (error) throw error;
+        if (error) {
+          if (/invalid login credentials/i.test(error.message)) {
+            throw new Error("That username and password don't match an account. Passwords are case-sensitive — double-check, or create a new account if you haven't yet.");
+          }
+          throw error;
+        }
       } else {
         // Use Supabase Edge Function (admin API) to bypass GoTrue email DNS validation.
         const res = await fetch(`${CFG.SUPABASE_URL}/functions/v1/signup`, {
@@ -1028,7 +1061,7 @@ function MessageBubble({ role, content }) {
   if (role === 'assistant') {
     return (
       <div className="flex gap-3 fade-in">
-        <img src={LOGO_STATIC} alt="" className="w-9 h-9 mt-1 shrink-0" />
+        <Logo className="w-9 h-9 mt-1 shrink-0" />
         <div className="question-card p-4 flex-1 min-w-0">
           <div className="text-[10px] font-bold tracking-wider text-muted mb-2">SOCRIFY ASKS</div>
           <div className="whitespace-pre-wrap leading-relaxed">{content}</div>
@@ -1047,7 +1080,7 @@ function MessageBubble({ role, content }) {
 function AssistantTyping() {
   return (
     <div className="flex gap-3 fade-in">
-      <img src={LOGO_ANIMATED} alt="" className="w-9 h-9 mt-1 shrink-0 pulse-soft" />
+      <Logo className="w-9 h-9 mt-1 shrink-0" animated />
       <div className="question-card p-4 flex items-center">
         <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
       </div>

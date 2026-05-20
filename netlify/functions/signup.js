@@ -1,17 +1,14 @@
 // Server-side signup — uses the service role key so GoTrue's email
 // DNS validation never runs on the browser client.
 //
-// Env vars (same as chat.js):
-//   SUPABASE_DATABASE_URL  OR  SUPABASE_URL
-//   SUPABASE_SERVICE_ROLE_KEY
+// Env vars required on Netlify:
+//   SUPABASE_URL              (Supabase project URL, e.g. https://xxx.supabase.co)
+//   SUPABASE_SERVICE_ROLE_KEY (service role key — never expose to the client)
 
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
 
-// Prefer SUPABASE_URL (the REST API URL). SUPABASE_DATABASE_URL is the
-// PostgreSQL connection string injected by Netlify's native integration and
-// must not be passed to the JS client.
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.SUPABASE_DATABASE_URL;
+const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 let supaAdmin = null;
@@ -19,7 +16,8 @@ try {
   if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
     supaAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
   }
-} catch (_) {
+} catch (err) {
+  console.error('Supabase client init failed:', err.message);
   // supaAdmin stays null; handler returns 500 "Server configuration error"
 }
 

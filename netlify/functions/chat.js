@@ -13,10 +13,7 @@ const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-// Prefer SUPABASE_URL (the REST API URL). SUPABASE_DATABASE_URL is the
-// PostgreSQL connection string injected by Netlify's native integration and
-// must not be passed to the JS client.
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.SUPABASE_DATABASE_URL;
+const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -33,7 +30,8 @@ try {
   if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
     supa = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
   }
-} catch (_) {
+} catch (err) {
+  console.error('Supabase client init failed:', err.message);
   // supa stays null; rate limiting is skipped (fail open)
 }
 

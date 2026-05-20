@@ -80,6 +80,11 @@ exports.handler = async (event) => {
     return { statusCode: 405, headers: cors, body: JSON.stringify({ error: 'Method not allowed' }) };
   }
   if (!supaAdmin) {
+    console.error(
+      'Supabase client not initialised.',
+      'SUPABASE_URL set:', !!process.env.SUPABASE_URL,
+      'SUPABASE_SERVICE_ROLE_KEY set:', !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+    );
     return { statusCode: 500, headers: cors, body: JSON.stringify({ error: 'Server configuration error' }) };
   }
 

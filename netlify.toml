@@ -19,6 +19,19 @@
   status = 200
   force = false
 
+# Ensure robots.txt and sitemap are served as plain files (not caught by SPA redirect)
+[[headers]]
+  for = "/robots.txt"
+  [headers.values]
+    Content-Type = "text/plain; charset=utf-8"
+    Cache-Control = "public, max-age=86400"
+
+[[headers]]
+  for = "/sitemap.xml"
+  [headers.values]
+    Content-Type = "application/xml; charset=utf-8"
+    Cache-Control = "public, max-age=86400"
+
 # Security headers
 [[headers]]
   for = "/*"

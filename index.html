@@ -558,7 +558,7 @@ function Auth({ onBack }) {
   const submit = async (e) => {
     e.preventDefault();
     setError('');
-    if (!identifier || !password) { setError('Please fill in all required fields.'); return; }
+    if (!identifier.trim() || !password) { setError('Please fill in all required fields.'); return; }
     if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
 
     setLoading(true);
@@ -575,7 +575,7 @@ function Auth({ onBack }) {
           throw siErr;
         }
       } else if (signupMethod === 'email') {
-        if (!looksLikeEmail(identifier)) { setError('Please enter a valid email address.'); setLoading(false); return; }
+        if (!looksLikeEmail(identifier)) { setError('Please enter a valid email address.'); return; }
         const { data, error: upErr } = await supa.auth.signUp({ email: identifier.trim(), password });
         if (upErr) throw upErr;
         if (data.session) {
@@ -586,14 +586,14 @@ function Auth({ onBack }) {
         }
       } else {
         // Username signup via edge function (bypasses GoTrue DNS validation)
-        if (!/^[a-zA-Z0-9_-]{3,20}$/.test(identifier)) {
-          setError('Username: 3–20 chars, letters/numbers/_/- only.'); setLoading(false); return;
+        if (!/^[a-zA-Z0-9_-]{3,20}$/.test(identifier.trim())) {
+          setError('Username: 3–20 chars, letters/numbers/_/- only.'); return;
         }
-        const fakeEmail = usernameToEmail(identifier);
+        const fakeEmail = usernameToEmail(identifier.trim());
         const res = await fetch(`${CFG.SUPABASE_URL}/functions/v1/signup`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: identifier, password, recovery_email: recoveryEmail || null }),
+          body: JSON.stringify({ username: identifier.trim(), password, recovery_email: recoveryEmail.trim() || null }),
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json.error || `Signup failed (HTTP ${res.status})`);
@@ -615,7 +615,7 @@ function Auth({ onBack }) {
           <div className="surface w-full max-w-md p-7 rounded-2xl fade-in text-center">
             <div className="text-4xl mb-4">📬</div>
             <h2 className="text-2xl font-bold mb-2">Check your inbox</h2>
-            <p className="text-sm text-muted mb-5">We sent a confirmation link to <strong>{identifier}</strong>. Click it to activate your account, then come back to sign in.</p>
+            <p className="text-sm text-muted mb-5">We sent a confirmation link to <strong>{identifier.trim()}</strong>. Click it to activate your account, then come back to sign in.</p>
             <button type="button" onClick={() => switchMode('signin')} className="btn-primary px-6 py-2.5 rounded-lg">Go to sign in</button>
           </div>
         </main>

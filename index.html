@@ -259,6 +259,8 @@ const STRENGTH_OPTIONS  = ['Math','Writing','Science','History','Languages','Art
 const GRADE_OPTIONS     = ['Middle School','9th Grade','10th Grade','11th Grade','12th Grade','College','Adult Learner'];
 const DIFFICULTY_OPTS   = ['Easier','Standard','Challenging'];
 
+const GENERAL_SUBJECT = { id: 'general', label: 'General', icon: '💬', persona: 'methodical' };
+
 const MODES = [
   { id: 'tutor',    label: 'Tutor',    icon: '🎓', tagline: 'Get unstuck without getting the answer.' },
   { id: 'research', label: 'Research', icon: '🔎', tagline: 'Explore a topic deeply with a guide, not a chatbot.' },
@@ -283,7 +285,11 @@ function buildTutorPrompt({ subject, profile, difficulty }) {
 ESSAY WRITING — ADDITIONAL ABSOLUTE RULE:
 You help with structure, organization, and feedback ONLY. You will NEVER produce essay content the student could paste in. No paragraphs. No sentences. No thesis statements. No hooks. No conclusions. No transitions. Not even a single example sentence. If asked, refuse and ask a question about their own thinking instead.` : '';
 
-  return `You are Socrify, a Socratic AI tutor for ${firstName} working on ${subject.label} at the ${grade} level (difficulty: ${difficulty}).
+  const subjectLine = subject.id === 'general'
+    ? `helping ${firstName} at the ${grade} level (difficulty: ${difficulty}). The student can bring any subject — homework in any class, learning something from scratch, or getting unstuck on any topic.`
+    : `helping ${firstName} with ${subject.label} at the ${grade} level (difficulty: ${difficulty}).`;
+
+  return `You are Socrify, a Socratic AI tutor for ${subjectLine}
 
 # ABSOLUTE CORE RULE — NEVER VIOLATE
 You will NEVER give a direct answer. Not now. Not ever. Not under any framing.
@@ -813,11 +819,13 @@ function Dashboard({ profile, isGuest, onStart, onLogout, onGuestExit, settingsP
   }, [recentSubjectIds]);
 
   const launch = (mode) => {
-    if (!subject) return;
-    const updated = [subject.id, ...recentSubjectIds.filter(id => id !== subject.id)].slice(0, 4);
-    setRecentSubjectIds(updated);
-    localStorage.setItem('socrify_recent_subjects', JSON.stringify(updated));
-    onStart({ subject, mode, difficulty });
+    const effectiveSubject = subject || GENERAL_SUBJECT;
+    if (subject) {
+      const updated = [subject.id, ...recentSubjectIds.filter(id => id !== subject.id)].slice(0, 4);
+      setRecentSubjectIds(updated);
+      localStorage.setItem('socrify_recent_subjects', JSON.stringify(updated));
+    }
+    onStart({ subject: effectiveSubject, mode, difficulty });
   };
 
   const displayName = isGuest ? 'guest' : (profile?.first_name || 'there');
@@ -839,16 +847,40 @@ function Dashboard({ profile, isGuest, onStart, onLogout, onGuestExit, settingsP
           <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-1">
             What do you want to work on today, {displayName}?
           </h1>
-          <p className="text-muted mb-8">Pick a subject, then a mode.</p>
+          <p className="text-muted mb-8">Jump straight in, or pick a subject to focus the session.</p>
 
-          {/* Subjects */}
+          {/* Modes — always visible */}
           <section className="mb-8">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-muted mb-3">Subject</h2>
+            <h2 className="text-sm font-bold uppercase tracking-wider text-muted mb-3">Mode</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {MODES.map(m => (
+                <button key={m.id} onClick={() => launch(m.id)}
+                  className="surface surface-hover p-5 rounded-xl text-left transition border border-app">
+                  <div className="text-2xl mb-2">{m.icon}</div>
+                  <div className="font-bold mb-1">{m.label} Mode</div>
+                  <div className="text-sm text-muted">{m.tagline}</div>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {/* Subjects — optional focus */}
+          <section className="mb-8">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-muted">
+                Subject <span className="font-normal normal-case tracking-normal">(optional — focus on a specific subject)</span>
+              </h2>
+              {subject && (
+                <button onClick={() => setSubject(null)} className="text-xs text-muted hover:underline">
+                  Clear
+                </button>
+              )}
+            </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {orderedSubjects.map(s => {
                 const active = subject?.id === s.id;
                 return (
-                  <button key={s.id} onClick={() => setSubject(s)}
+                  <button key={s.id} onClick={() => setSubject(active ? null : s)}
                     className={`p-4 rounded-xl border text-left transition ${active ? 'btn-primary' : 'surface surface-hover border-app'}`}
                     style={active ? { borderColor: 'var(--accent)' } : {}}>
                     <div className="text-2xl mb-1.5">{s.icon}</div>
@@ -859,7 +891,7 @@ function Dashboard({ profile, isGuest, onStart, onLogout, onGuestExit, settingsP
             </div>
           </section>
 
-          {/* Difficulty */}
+          {/* Difficulty — shows when subject selected */}
           {subject && (
             <section className="mb-8 fade-in">
               <h2 className="text-sm font-bold uppercase tracking-wider text-muted mb-3">Difficulty</h2>
@@ -872,27 +904,6 @@ function Dashboard({ profile, isGuest, onStart, onLogout, onGuestExit, settingsP
                 ))}
               </div>
             </section>
-          )}
-
-          {/* Modes */}
-          {subject && (
-            <section className="fade-in">
-              <h2 className="text-sm font-bold uppercase tracking-wider text-muted mb-3">Mode</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {MODES.map(m => (
-                  <button key={m.id} onClick={() => launch(m.id)}
-                    className="surface surface-hover p-5 rounded-xl text-left transition border border-app">
-                    <div className="text-2xl mb-2">{m.icon}</div>
-                    <div className="font-bold mb-1">{m.label} Mode</div>
-                    <div className="text-sm text-muted">{m.tagline}</div>
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {!subject && (
-            <div className="text-sm text-muted mt-4">Pick a subject above to choose a mode.</div>
           )}
         </div>
 
@@ -932,8 +943,12 @@ function SessionHeader({ config, onExit, settingsProps, isGuest }) {
         <div className="flex items-center gap-2 ml-2 text-sm">
           <button onClick={onExit} className="text-muted hover:underline">← Dashboard</button>
           <span className="text-muted">·</span>
-          <span className="font-semibold">{config.subject.icon} {config.subject.label}</span>
-          <span className="text-muted hidden sm:inline">·</span>
+          {config.subject.id !== 'general' && (
+            <>
+              <span className="font-semibold">{config.subject.icon} {config.subject.label}</span>
+              <span className="text-muted hidden sm:inline">·</span>
+            </>
+          )}
           <span className="text-muted hidden sm:inline capitalize">{config.mode} mode</span>
         </div>
       }
@@ -978,9 +993,12 @@ function TutorMode({ config, profile, isGuest, onExit, settingsProps }) {
   async function sendOpening() {
     setLoading(true);
     try {
+      const sessionContext = config.subject.id === 'general'
+        ? 'a general session — I might ask about homework, learning something new, or any subject'
+        : `a ${config.subject.label} session`;
       const initialMessages = [{
         role: 'user',
-        content: `Hi! I'm starting a ${config.subject.label} session. Please open with a question that helps figure out what I want to work on and what I already know — without giving any direct answers.`
+        content: `Hi! I'm starting ${sessionContext}. Please open with a question that helps figure out what I want to work on and what I already know — without giving any direct answers.`
       }];
       const data = await callAI({ messages: initialMessages, system: systemPrompt, mode: 'tutor', subject: config.subject.id });
       setMessages([{ role: 'assistant', content: data.text }]);

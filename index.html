@@ -536,8 +536,8 @@ function Auth({ onBack }) {
         const { error } = await supa.auth.signInWithPassword({ email: fakeEmail, password });
         if (error) throw error;
       } else {
-        // Use server-side admin signup to bypass GoTrue email DNS validation.
-        const res = await fetch('/.netlify/functions/signup', {
+        // Use Supabase Edge Function (admin API) to bypass GoTrue email DNS validation.
+        const res = await fetch(`${CFG.SUPABASE_URL}/functions/v1/signup`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password, recovery_email: email || null }),

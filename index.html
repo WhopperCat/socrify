@@ -536,18 +536,15 @@ function Auth({ onBack }) {
         const { error } = await supa.auth.signInWithPassword({ email: fakeEmail, password });
         if (error) throw error;
       } else {
-        const { error } = await supa.auth.signUp({
-          email: fakeEmail,
-          password,
-          options: {
-            data: {
-              username,
-              recovery_email: email || null,
-            },
-          },
+        // Use server-side admin signup to bypass GoTrue email DNS validation.
+        const res = await fetch('/.netlify/functions/signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, recovery_email: email || null }),
         });
-        if (error) throw error;
-        // Auto-sign in (no email confirmation flow in beta)
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error || `Signup failed (HTTP ${res.status})`);
+        // Server created the confirmed account — sign in now.
         const { error: siErr } = await supa.auth.signInWithPassword({ email: fakeEmail, password });
         if (siErr) throw siErr;
       }

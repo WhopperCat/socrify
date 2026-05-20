@@ -542,8 +542,8 @@ function Auth({ onBack }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password, recovery_email: email || null }),
         });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error || 'Signup failed');
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error || `Signup failed (HTTP ${res.status})`);
         // Server created the confirmed account — sign in now.
         const { error: siErr } = await supa.auth.signInWithPassword({ email: fakeEmail, password });
         if (siErr) throw siErr;

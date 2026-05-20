@@ -2,7 +2,8 @@
 // All client AI calls route through here.
 // - Holds API key server-side (env: ANTHROPIC_API_KEY)
 // - Enforces hourly rate limits via Supabase
-// - Locks model to Claude Haiku 4.5
+// - Tutor uses Haiku 4.5 (fast back-and-forth)
+// - Research uses Sonnet 4.6 with extended thinking (deeper, slower)
 //
 // Env vars expected on Netlify:
 //   ANTHROPIC_API_KEY          (manually added)
@@ -16,14 +17,23 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const MODEL = 'claude-haiku-4-5-20251001';
-const MAX_TOKENS = 1024;
+const TUTOR_MODEL = 'claude-haiku-4-5-20251001';
+const RESEARCH_MODEL = 'claude-sonnet-4-6';
+const TUTOR_MAX_TOKENS = 1024;
+// Research: extended thinking budget + room for a thorough response.
+// max_tokens must be strictly greater than thinking budget.
+const RESEARCH_THINKING_BUDGET = 8000;
+const RESEARCH_MAX_TOKENS = 12000;
 
 // Rate limit policy (hourly windows)
 const LIMITS = {
   guest: 15,   // per IP
   free:  60,   // per user
 };
+
+// Research mode is expensive (Sonnet + extended thinking). Cap at 1 call per
+// 24h per user/IP — one deep dive per day.
+const RESEARCH_DAILY_LIMIT = 1;
 
 let supa = null;
 try {
@@ -69,6 +79,29 @@ async function checkRateLimit({ userId, ipHash, isGuest }) {
     return { ok: true, errored: true };
   }
   return { ok: (count || 0) < cap, used: count || 0, cap };
+}
+
+async function checkResearchDailyLimit({ userId, ipHash }) {
+  if (!supa) return { ok: true, skipped: true };
+
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  let q = supa
+    .from('usage_logs')
+    .select('id', { count: 'exact', head: true })
+    .eq('event_type', 'ai_call')
+    .eq('mode', 'research')
+    .gte('created_at', oneDayAgo);
+
+  if (userId) q = q.eq('user_id', userId);
+  else q = q.eq('ip_hash', ipHash);
+
+  const { count, error } = await q;
+  if (error) {
+    console.error('Research daily limit query failed:', error);
+    return { ok: true, errored: true };
+  }
+  return { ok: (count || 0) < RESEARCH_DAILY_LIMIT, used: count || 0, cap: RESEARCH_DAILY_LIMIT };
 }
 
 async function logCall({ userId, ipHash, mode, subject }) {
@@ -159,6 +192,36 @@ exports.handler = async (event) => {
         }),
       };
     }
+
+    // Extra cap for research — only 1 deep dive per 24h.
+    if (mode === 'research') {
+      const rdl = await checkResearchDailyLimit({ userId: user?.id, ipHash });
+      if (!rdl.ok) {
+        return {
+          statusCode: 429,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            error: 'research_daily_limit',
+            message: `Research mode is limited to ${rdl.cap} deep dive per day. Try again in 24 hours, or use Tutor mode in the meantime.`,
+            used: rdl.used,
+            cap: rdl.cap,
+          }),
+        };
+      }
+    }
+  }
+
+  // Pick model + token budget by mode. Research runs Sonnet with extended thinking
+  // so it can do real exploration; Tutor runs Haiku for snappy back-and-forth.
+  const isResearch = mode === 'research';
+  const requestBody = {
+    model: isResearch ? RESEARCH_MODEL : TUTOR_MODEL,
+    max_tokens: isResearch ? RESEARCH_MAX_TOKENS : TUTOR_MAX_TOKENS,
+    system,
+    messages,
+  };
+  if (isResearch) {
+    requestBody.thinking = { type: 'enabled', budget_tokens: RESEARCH_THINKING_BUDGET };
   }
 
   // Call Anthropic
@@ -170,12 +233,7 @@ exports.handler = async (event) => {
         'x-api-key': ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
       },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: MAX_TOKENS,
-        system,
-        messages,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     const data = await apiRes.json();

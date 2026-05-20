@@ -401,7 +401,6 @@ function App() {
   const [profile, setProfile] = useState(null);
   const [view, setView] = useState('loading');
   const [guestMode, setGuestMode] = useState(false);
-  const [sessionConfig, setSessionConfig] = useState(null);
   const [theme, setTheme] = useState(() => localStorage.getItem('socrify_theme') || 'light');
   const [dyslexic, setDyslexic] = useState(() => localStorage.getItem('socrify_dyslexic') === '1');
 
@@ -448,17 +447,14 @@ function App() {
   }
 
   const startGuest = () => { setGuestMode(true); setView('dashboard'); };
-  const exitGuest  = () => { setGuestMode(false); setSessionConfig(null); setView('landing'); };
+  const exitGuest  = () => { setGuestMode(false); setView('landing'); };
   const logout     = async () => { await supa.auth.signOut(); };
-  const startSession = (cfg) => { setSessionConfig(cfg); setView('session'); };
-  const exitSession  = () => { setSessionConfig(null); setView('dashboard'); };
 
   if (view === 'loading')    return <LoadingScreen />;
   if (view === 'landing')    return <Landing onSignIn={() => setView('auth')} onGuest={startGuest} settingsProps={{ theme, setTheme, dyslexic, setDyslexic }} />;
   if (view === 'auth')       return <Auth onBack={() => setView('landing')} />;
   if (view === 'onboarding') return <Onboarding userId={session.user.id} existing={profile} onDone={() => loadProfile(session.user.id)} settingsProps={{ theme, setTheme, dyslexic, setDyslexic }} />;
-  if (view === 'dashboard')  return <Dashboard profile={profile} isGuest={guestMode} onStart={startSession} onLogout={logout} onGuestExit={exitGuest} settingsProps={{ theme, setTheme, dyslexic, setDyslexic }} />;
-  if (view === 'session')    return <SessionView config={sessionConfig} profile={profile} isGuest={guestMode} onExit={exitSession} settingsProps={{ theme, setTheme, dyslexic, setDyslexic }} />;
+  if (view === 'dashboard' || view === 'session') return <AppShell profile={profile} isGuest={guestMode} onLogout={logout} onGuestExit={exitGuest} settingsProps={{ theme, setTheme, dyslexic, setDyslexic }} />;
   return null;
 }
 
@@ -803,10 +799,12 @@ function MultiSelect({ options, selected, onChange }) {
   );
 }
 
-// ===== DASHBOARD =====
-function Dashboard({ profile, isGuest, onStart, onLogout, onGuestExit, settingsProps }) {
+// ===== APP SHELL (sidebar layout) =====
+function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps }) {
   const [subject, setSubject] = useState(null);
   const [difficulty, setDifficulty] = useState('Standard');
+  const [sessionConfig, setSessionConfig] = useState(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [recentSubjectIds, setRecentSubjectIds] = useState(() => {
     try { return JSON.parse(localStorage.getItem('socrify_recent_subjects') || '[]'); }
     catch { return []; }
@@ -825,136 +823,230 @@ function Dashboard({ profile, isGuest, onStart, onLogout, onGuestExit, settingsP
       setRecentSubjectIds(updated);
       localStorage.setItem('socrify_recent_subjects', JSON.stringify(updated));
     }
-    onStart({ subject: effectiveSubject, mode, difficulty });
+    setSessionConfig({ subject: effectiveSubject, mode, difficulty });
+    setDrawerOpen(false);
   };
 
   const displayName = isGuest ? 'guest' : (profile?.first_name || 'there');
-  const showAds = isGuest || !profile?.is_dev; // ad sidebar visible for Guest + Free (no live ads in beta)
+  const showAds = isGuest || !profile?.is_dev;
+
+  const sidebarProps = {
+    subject, setSubject, difficulty, setDifficulty,
+    sessionConfig, launch, orderedSubjects,
+    profile, isGuest, onLogout, onGuestExit, settingsProps, displayName,
+  };
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <TopBar
-        left={
-          <span className="hidden sm:inline text-sm text-muted ml-2">
-            {isGuest ? 'Guest session' : `Hi, ${displayName}`}
-          </span>
-        }
-        right={<SettingsCluster {...settingsProps} onLogout={onLogout} isGuest={isGuest} onGuestExit={onGuestExit} />}
-      />
-      <main className="flex-1 max-w-6xl mx-auto w-full px-6 py-8 flex gap-6">
-        {/* Main column */}
-        <div className="flex-1 min-w-0">
-          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-1">
-            What do you want to work on today, {displayName}?
-          </h1>
-          <p className="text-muted mb-8">Jump straight in, or pick a subject to focus the session.</p>
+    <div className="h-screen flex flex-col overflow-hidden">
+      {/* Top bar */}
+      <header className="flex items-center justify-between px-4 py-3 border-b border-app surface shrink-0">
+        <div className="flex items-center gap-2">
+          {/* Hamburger — mobile only */}
+          <button
+            onClick={() => setDrawerOpen(true)}
+            className="lg:hidden p-2 -ml-1 rounded-lg btn-ghost"
+            aria-label="Open menu"
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="2" y1="4" x2="16" y2="4"/><line x1="2" y1="9" x2="16" y2="9"/><line x1="2" y1="14" x2="16" y2="14"/>
+            </svg>
+          </button>
+          <Logo className="w-7 h-7" />
+          <span className="font-bold tracking-tight">Socrify</span>
+          <span className="text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded-full surface-2 text-muted">BETA</span>
+        </div>
+        {/* Session context — shown on mobile where sidebar is hidden */}
+        {sessionConfig && (
+          <div className="lg:hidden text-xs text-muted truncate mx-3 flex-1 text-center">
+            {sessionConfig.subject.id !== 'general' ? `${sessionConfig.subject.icon} ${sessionConfig.subject.label} · ` : ''}
+            <span className="capitalize">{sessionConfig.mode}</span>
+          </div>
+        )}
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => settingsProps.setDyslexic(!settingsProps.dyslexic)}
+            className={`hidden sm:block text-xs px-2.5 py-1.5 rounded-md border border-app ${settingsProps.dyslexic ? 'btn-primary' : 'btn-ghost'}`}
+            title="Toggle dyslexia-friendly font"
+          >Dx</button>
+          <button
+            onClick={() => settingsProps.setTheme(settingsProps.theme === 'light' ? 'dark' : 'light')}
+            className="text-xs px-2.5 py-1.5 rounded-md btn-ghost"
+          >{settingsProps.theme === 'light' ? '🌙' : '☀️'}</button>
+          {isGuest && <button onClick={onGuestExit} className="text-xs px-2.5 py-1.5 rounded-md btn-ghost">Exit</button>}
+          {!isGuest && <button onClick={onLogout} className="text-xs px-2.5 py-1.5 rounded-md btn-ghost hidden sm:block">Sign out</button>}
+        </div>
+      </header>
 
-          {/* Modes — always visible */}
-          <section className="mb-8">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-muted mb-3">Mode</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {MODES.map(m => (
-                <button key={m.id} onClick={() => launch(m.id)}
-                  className="surface surface-hover p-5 rounded-xl text-left transition border border-app">
-                  <div className="text-2xl mb-2">{m.icon}</div>
-                  <div className="font-bold mb-1">{m.label} Mode</div>
-                  <div className="text-sm text-muted">{m.tagline}</div>
+      <div className="flex flex-1 overflow-hidden">
+        {/* Desktop sidebar */}
+        <Sidebar {...sidebarProps} />
+
+        {/* Mobile drawer */}
+        {drawerOpen && (
+          <div className="lg:hidden fixed inset-0 z-40 flex">
+            <div className="absolute inset-0 bg-black/50" onClick={() => setDrawerOpen(false)} />
+            <div className="relative z-50 w-72 max-w-[85vw] flex flex-col shadow-2xl">
+              <Sidebar {...sidebarProps} onClose={() => setDrawerOpen(false)} isMobileDrawer />
+            </div>
+          </div>
+        )}
+
+        {/* Main content */}
+        <div className="flex-1 overflow-hidden flex flex-col min-w-0">
+          {!sessionConfig ? (
+            <AppEmptyState displayName={displayName} showAds={showAds} />
+          ) : (
+            <SessionView
+              config={sessionConfig}
+              profile={profile}
+              isGuest={isGuest}
+              onExit={() => setSessionConfig(null)}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ===== SIDEBAR =====
+function Sidebar({ subject, setSubject, difficulty, setDifficulty, sessionConfig, launch, orderedSubjects,
+                   profile, isGuest, onLogout, settingsProps, displayName, onClose, isMobileDrawer }) {
+  return (
+    <aside className={`${isMobileDrawer ? 'flex h-full' : 'hidden lg:flex'} w-64 shrink-0 flex-col border-r border-app surface overflow-hidden`}>
+      {/* User / close row */}
+      <div className="flex items-center justify-between px-4 py-3.5 border-b border-app shrink-0">
+        <div>
+          <div className="text-sm font-semibold">{isGuest ? 'Guest session' : `Hi, ${displayName}`}</div>
+          {profile?.grade_level && <div className="text-xs text-muted">{profile.grade_level}</div>}
+        </div>
+        {isMobileDrawer && (
+          <button onClick={onClose} className="p-1.5 rounded-lg btn-ghost text-lg leading-none">×</button>
+        )}
+      </div>
+
+      {/* Scrollable body */}
+      <div className="flex-1 overflow-y-auto">
+        {/* Modes */}
+        <div className="px-3 pt-4 pb-2">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-muted px-1 mb-2">Mode</div>
+          {MODES.map(m => {
+            const active = sessionConfig?.mode === m.id;
+            return (
+              <button
+                key={m.id}
+                onClick={() => launch(m.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition mb-1 ${active ? 'btn-primary' : 'surface-hover'}`}
+              >
+                <span className="text-xl shrink-0">{m.icon}</span>
+                <div className="min-w-0">
+                  <div className="font-semibold text-sm">{m.label}</div>
+                  <div className={`text-xs leading-tight mt-0.5 ${active ? 'opacity-75' : 'text-muted'}`}>{m.tagline}</div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="border-t border-app mx-3 my-1" />
+
+        {/* Subjects */}
+        <div className="px-3 pt-3 pb-2">
+          <div className="flex items-center justify-between px-1 mb-2">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-muted">
+              Subject <span className="font-normal normal-case tracking-normal opacity-70">(optional)</span>
+            </div>
+            {subject && (
+              <button onClick={() => setSubject(null)} className="text-[10px] text-muted hover:underline">Clear</button>
+            )}
+          </div>
+          <div className="space-y-0.5">
+            {orderedSubjects.map(s => {
+              const active = subject?.id === s.id;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => setSubject(active ? null : s)}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-sm transition ${active ? 'btn-primary' : 'surface-hover'}`}
+                >
+                  <span className="shrink-0">{s.icon}</span>
+                  <span className="font-medium truncate">{s.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Difficulty */}
+        {subject && (
+          <div className="px-3 pt-3 pb-2 fade-in">
+            <div className="border-t border-app mb-3" />
+            <div className="text-[10px] font-bold uppercase tracking-wider text-muted px-1 mb-2">Difficulty</div>
+            <div className="flex flex-wrap gap-1.5 px-1">
+              {DIFFICULTY_OPTS.map(d => (
+                <button
+                  key={d}
+                  onClick={() => setDifficulty(d)}
+                  className={`tag px-3 py-1.5 rounded-lg text-xs ${difficulty === d ? 'selected' : ''}`}
+                >
+                  {d}
                 </button>
               ))}
             </div>
-          </section>
+          </div>
+        )}
+      </div>
 
-          {/* Subjects — optional focus */}
-          <section className="mb-8">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-bold uppercase tracking-wider text-muted">
-                Subject <span className="font-normal normal-case tracking-normal">(optional — focus on a specific subject)</span>
-              </h2>
-              {subject && (
-                <button onClick={() => setSubject(null)} className="text-xs text-muted hover:underline">
-                  Clear
-                </button>
-              )}
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {orderedSubjects.map(s => {
-                const active = subject?.id === s.id;
-                return (
-                  <button key={s.id} onClick={() => setSubject(active ? null : s)}
-                    className={`p-4 rounded-xl border text-left transition ${active ? 'btn-primary' : 'surface surface-hover border-app'}`}
-                    style={active ? { borderColor: 'var(--accent)' } : {}}>
-                    <div className="text-2xl mb-1.5">{s.icon}</div>
-                    <div className="font-semibold text-sm">{s.label}</div>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-
-          {/* Difficulty — shows when subject selected */}
-          {subject && (
-            <section className="mb-8 fade-in">
-              <h2 className="text-sm font-bold uppercase tracking-wider text-muted mb-3">Difficulty</h2>
-              <div className="flex gap-2">
-                {DIFFICULTY_OPTS.map(d => (
-                  <button key={d} onClick={() => setDifficulty(d)}
-                    className={`tag px-4 py-2 rounded-lg text-sm ${difficulty === d ? 'selected' : ''}`}>
-                    {d}
-                  </button>
-                ))}
-              </div>
-            </section>
+      {/* Bottom: mobile-only settings */}
+      {isMobileDrawer && (
+        <div className="px-3 py-3 border-t border-app shrink-0 flex flex-wrap gap-2">
+          <button
+            onClick={() => settingsProps.setDyslexic(!settingsProps.dyslexic)}
+            className={`text-xs px-2.5 py-1.5 rounded-md border border-app ${settingsProps.dyslexic ? 'btn-primary' : 'btn-ghost'}`}
+          >Dx</button>
+          <button
+            onClick={() => settingsProps.setTheme(settingsProps.theme === 'light' ? 'dark' : 'light')}
+            className="text-xs px-2.5 py-1.5 rounded-md btn-ghost"
+          >{settingsProps.theme === 'light' ? '🌙' : '☀️'}</button>
+          {!isGuest && (
+            <button onClick={onLogout} className="text-xs px-2.5 py-1.5 rounded-md btn-ghost ml-auto">Sign out</button>
           )}
         </div>
+      )}
+    </aside>
+  );
+}
 
-        {/* Ad sidebar — placeholder layout only, no live ads in beta */}
-        {showAds && (
-          <aside className="hidden lg:flex w-64 shrink-0 flex-col gap-4">
-            <div className="ad-slot rounded-xl p-6 text-center text-xs">
-              <div className="font-bold mb-1">Ad space</div>
-              <div>Beta placeholder.<br/>Live ads come in v1.0.</div>
-              <div className="mt-3 h-32 flex items-center justify-center opacity-50">300×250</div>
-            </div>
-            <div className="ad-slot rounded-xl p-6 text-center text-xs">
-              <div className="font-bold mb-1">Ad space</div>
-              <div className="mt-2 h-48 flex items-center justify-center opacity-50">300×600</div>
-            </div>
-          </aside>
-        )}
-      </main>
+// ===== APP EMPTY STATE =====
+function AppEmptyState({ displayName, showAds }) {
+  return (
+    <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex flex-col items-center justify-center px-6 py-12 text-center">
+        <Logo className="w-16 h-16 mb-6 opacity-30" />
+        <h2 className="text-2xl font-bold mb-2">Ready when you are, {displayName}.</h2>
+        <p className="text-muted max-w-xs">Pick a mode from the sidebar to start. Subject and difficulty are optional.</p>
+      </div>
+      {showAds && (
+        <aside className="hidden xl:flex w-60 shrink-0 flex-col gap-4 p-4 border-l border-app">
+          <div className="ad-slot rounded-xl p-5 text-center text-xs">
+            <div className="font-bold mb-1">Ad space</div>
+            <div className="text-muted">Beta placeholder.<br/>Live ads in v1.0.</div>
+            <div className="mt-3 h-28 flex items-center justify-center opacity-40">300×250</div>
+          </div>
+          <div className="ad-slot rounded-xl p-5 text-center text-xs">
+            <div className="font-bold mb-1">Ad space</div>
+            <div className="mt-2 h-44 flex items-center justify-center opacity-40">300×600</div>
+          </div>
+        </aside>
+      )}
     </div>
   );
 }
 
 // ===== SESSION VIEW (router between Tutor / Research) =====
-function SessionView({ config, profile, isGuest, onExit, settingsProps }) {
+function SessionView({ config, profile, isGuest, onExit }) {
   const Mode = config.mode === 'tutor' ? TutorMode : ResearchMode;
-  return (
-    <Mode config={config} profile={profile} isGuest={isGuest} onExit={onExit} settingsProps={settingsProps} />
-  );
-}
-
-// ===== SHARED — used by both modes =====
-function SessionHeader({ config, onExit, settingsProps, isGuest }) {
-  return (
-    <TopBar
-      compact
-      left={
-        <div className="flex items-center gap-2 ml-2 text-sm">
-          <button onClick={onExit} className="text-muted hover:underline">← Dashboard</button>
-          <span className="text-muted">·</span>
-          {config.subject.id !== 'general' && (
-            <>
-              <span className="font-semibold">{config.subject.icon} {config.subject.label}</span>
-              <span className="text-muted hidden sm:inline">·</span>
-            </>
-          )}
-          <span className="text-muted hidden sm:inline capitalize">{config.mode} mode</span>
-        </div>
-      }
-      right={<SettingsCluster {...settingsProps} isGuest={isGuest} />}
-    />
-  );
+  return <Mode config={config} profile={profile} isGuest={isGuest} onExit={onExit} />;
 }
 
 function ErrorBanner({ error, onDismiss }) {
@@ -968,7 +1060,7 @@ function ErrorBanner({ error, onDismiss }) {
 }
 
 // ===== TUTOR MODE =====
-function TutorMode({ config, profile, isGuest, onExit, settingsProps }) {
+function TutorMode({ config, profile, isGuest, onExit }) {
   const [messages, setMessages] = useState([]); // [{ role, content }]
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -1034,12 +1126,10 @@ function TutorMode({ config, profile, isGuest, onExit, settingsProps }) {
   };
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <SessionHeader config={config} onExit={onExit} settingsProps={settingsProps} isGuest={isGuest} />
+    <div className="flex-1 flex flex-col overflow-hidden">
       <ErrorBanner error={error} onDismiss={() => setError('')} />
-
-      <main className="flex-1 flex flex-col max-w-3xl w-full mx-auto px-4 sm:px-6 py-6">
-        <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-thin space-y-4 pb-4 pr-1">
+      <div className="flex-1 flex flex-col max-w-3xl w-full mx-auto px-4 sm:px-6 py-6 overflow-hidden min-h-0">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-thin space-y-4 pb-4 pr-1 min-h-0">
           {messages.map((m, i) => (
             <MessageBubble key={i} role={m.role} content={m.content} />
           ))}
@@ -1047,7 +1137,7 @@ function TutorMode({ config, profile, isGuest, onExit, settingsProps }) {
         </div>
 
         {/* Composer */}
-        <div className="mt-2">
+        <div className="mt-2 shrink-0">
           <div className="surface rounded-2xl p-3 flex items-end gap-2">
             <textarea
               value={input}
@@ -1070,10 +1160,10 @@ function TutorMode({ config, profile, isGuest, onExit, settingsProps }) {
               className="btn-ghost px-4 py-2 rounded-lg text-sm disabled:opacity-40">
               🤔 I'm Stuck
             </button>
-            <span className="text-xs text-muted">Press Enter to send · Shift+Enter for newline</span>
+            <span className="text-xs text-muted hidden sm:block">Enter to send · Shift+Enter for newline</span>
           </div>
         </div>
-      </main>
+      </div>
     </div>
   );
 }
@@ -1110,7 +1200,7 @@ function AssistantTyping() {
 }
 
 // ===== RESEARCH MODE =====
-function ResearchMode({ config, profile, isGuest, onExit, settingsProps }) {
+function ResearchMode({ config, profile, isGuest, onExit }) {
   const [topic, setTopic] = useState('');
   const [topicLocked, setTopicLocked] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -1172,10 +1262,9 @@ function ResearchMode({ config, profile, isGuest, onExit, settingsProps }) {
 
   if (!topicLocked) {
     return (
-      <div className="min-h-screen flex flex-col">
-        <SessionHeader config={config} onExit={onExit} settingsProps={settingsProps} isGuest={isGuest} />
+      <div className="flex-1 flex flex-col overflow-hidden">
         <ErrorBanner error={error} onDismiss={() => setError('')} />
-        <main className="flex-1 flex items-center justify-center px-6 py-12">
+        <div className="flex-1 flex items-center justify-center px-6 py-12">
           <div className="surface w-full max-w-xl p-7 rounded-2xl fade-in">
             <h2 className="text-2xl font-bold mb-1">What are you researching?</h2>
             <p className="text-sm text-muted mb-5">Be as broad or specific as you want. We'll open up the landscape.</p>
@@ -1189,30 +1278,28 @@ function ResearchMode({ config, profile, isGuest, onExit, settingsProps }) {
               {loading ? 'Starting…' : 'Start research session'}
             </button>
           </div>
-        </main>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="h-screen flex flex-col">
-      <SessionHeader config={config} onExit={onExit} settingsProps={settingsProps} isGuest={isGuest} />
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
       <ErrorBanner error={error} onDismiss={() => setError('')} />
-
-      <main className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-0 min-h-0">
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-0 min-h-0 overflow-hidden">
         {/* AI guidance panel */}
-        <div className="flex flex-col min-h-0 border-r border-app">
-          <div className="px-5 py-3 border-b border-app surface-2 flex items-center justify-between">
-            <div>
+        <div className="flex flex-col min-h-0 border-r border-app overflow-hidden">
+          <div className="px-5 py-3 border-b border-app surface-2 flex items-center shrink-0">
+            <div className="min-w-0">
               <div className="text-[10px] font-bold tracking-wider text-muted">RESEARCHING</div>
-              <div className="font-semibold text-sm truncate max-w-md">{topic}</div>
+              <div className="font-semibold text-sm truncate">{topic}</div>
             </div>
           </div>
-          <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-thin space-y-4 p-5">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-thin space-y-4 p-5 min-h-0">
             {messages.map((m, i) => <MessageBubble key={i} role={m.role} content={m.content} />)}
             {loading && <AssistantTyping />}
           </div>
-          <div className="p-3 border-t border-app surface">
+          <div className="p-3 border-t border-app surface shrink-0">
             <div className="flex items-end gap-2">
               <textarea
                 value={input} onChange={e => setInput(e.target.value)} onKeyDown={onKeyDown}
@@ -1225,9 +1312,9 @@ function ResearchMode({ config, profile, isGuest, onExit, settingsProps }) {
           </div>
         </div>
 
-        {/* Scratchpad */}
-        <div className="flex flex-col min-h-0">
-          <div className="px-5 py-3 border-b border-app surface-2 flex items-center justify-between">
+        {/* Scratchpad — hidden on mobile (no space) */}
+        <div className="hidden lg:flex flex-col min-h-0 overflow-hidden">
+          <div className="px-5 py-3 border-b border-app surface-2 flex items-center justify-between shrink-0">
             <div>
               <div className="text-[10px] font-bold tracking-wider text-muted">SCRATCHPAD</div>
               <div className="text-sm text-muted">Your notes — local only in beta</div>
@@ -1236,12 +1323,12 @@ function ResearchMode({ config, profile, isGuest, onExit, settingsProps }) {
           </div>
           <textarea
             value={notes} onChange={e => setNotes(e.target.value)}
-            className="flex-1 bg-transparent outline-none resize-none p-5 leading-relaxed scroll-thin"
+            className="flex-1 bg-transparent outline-none resize-none p-5 leading-relaxed scroll-thin min-h-0"
             style={{ color: 'var(--text)' }}
             placeholder="Take notes here. Sketch your thesis. Try out arguments. None of this is sent to the AI — it's your space."
           />
         </div>
-      </main>
+      </div>
     </div>
   );
 }

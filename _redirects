@@ -1,3 +1,0 @@
-# SPA fallback — all routes serve index.html
-# robots.txt and sitemap.xml are real files so they match before this rule
-/*    /index.html    200

@@ -26,6 +26,13 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+  });
+}
+
 async function hashIp(ip, salt) {
   const data = new TextEncoder().encode((salt || 'socrify-beta-salt') + (ip || ''));
   const buffer = await crypto.subtle.digest('SHA-256', data);
@@ -123,49 +130,31 @@ export async function onRequest(context) {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
   }
   if (request.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return json({ error: 'Method not allowed' }, 405);
   }
 
   const ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_API_KEY) {
-    return new Response(JSON.stringify({ error: 'Server missing ANTHROPIC_API_KEY' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return json({ error: 'Server missing ANTHROPIC_API_KEY' }, 500);
   }
 
   let body;
   try {
     body = await request.json();
   } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return json({ error: 'Invalid JSON' }, 400);
   }
 
   const { messages, system, mode, subject } = body;
 
   if (!Array.isArray(messages) || messages.length === 0) {
-    return new Response(JSON.stringify({ error: 'messages[] required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return json({ error: 'messages[] required' }, 400);
   }
   if (typeof system !== 'string' || system.length < 20) {
-    return new Response(JSON.stringify({ error: 'system prompt required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return json({ error: 'system prompt required' }, 400);
   }
   if (messages.length > 60) {
-    return new Response(JSON.stringify({ error: 'Conversation too long' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return json({ error: 'Conversation too long' }, 400);
   }
 
   const supa = makeSupa(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
@@ -178,29 +167,23 @@ export async function onRequest(context) {
   if (!isDev) {
     const rl = await checkRateLimit(supa, { userId: user?.id, ipHash, isGuest });
     if (!rl.ok) {
-      return new Response(
-        JSON.stringify({
-          error: 'rate_limited',
-          message: `Hourly limit reached (${rl.used}/${rl.cap}). Try again in a bit.`,
-          used: rl.used,
-          cap: rl.cap,
-        }),
-        { status: 429, headers: { 'Content-Type': 'application/json' } },
-      );
+      return json({
+        error: 'rate_limited',
+        message: `Hourly limit reached (${rl.used}/${rl.cap}). Try again in a bit.`,
+        used: rl.used,
+        cap: rl.cap,
+      }, 429);
     }
 
     if (mode === 'research') {
       const rdl = await checkResearchDailyLimit(supa, { userId: user?.id, ipHash });
       if (!rdl.ok) {
-        return new Response(
-          JSON.stringify({
-            error: 'research_daily_limit',
-            message: `Research mode is limited to ${rdl.cap} deep dive per day. Try again in 24 hours, or use Tutor mode in the meantime.`,
-            used: rdl.used,
-            cap: rdl.cap,
-          }),
-          { status: 429, headers: { 'Content-Type': 'application/json' } },
-        );
+        return json({
+          error: 'research_daily_limit',
+          message: `Research mode is limited to ${rdl.cap} deep dive per day. Try again in 24 hours, or use Tutor mode in the meantime.`,
+          used: rdl.used,
+          cap: rdl.cap,
+        }, 429);
       }
     }
   }
@@ -236,10 +219,7 @@ export async function onRequest(context) {
 
     if (!apiRes.ok) {
       console.error('Anthropic error:', data);
-      return new Response(
-        JSON.stringify({ error: 'upstream_error', detail: data?.error?.message || 'Unknown' }),
-        { status: apiRes.status, headers: { 'Content-Type': 'application/json' } },
-      );
+      return json({ error: 'upstream_error', detail: data?.error?.message || 'Unknown' }, apiRes.status);
     }
 
     await logCall(supa, { userId: user?.id, ipHash, mode, subject });
@@ -263,15 +243,9 @@ export async function onRequest(context) {
     const citations = Array.from(citationsByUrl.values());
     const searchCount = data?.usage?.server_tool_use?.web_search_requests || 0;
 
-    return new Response(
-      JSON.stringify({ text, citations, searchCount, stop_reason: data.stop_reason, usage: data.usage }),
-      { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
-    );
+    return json({ text, citations, searchCount, stop_reason: data.stop_reason, usage: data.usage });
   } catch (err) {
     console.error('Proxy error:', err);
-    return new Response(
-      JSON.stringify({ error: 'proxy_failure', detail: String(err.message || err) }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } },
-    );
+    return json({ error: 'proxy_failure', detail: String(err.message || err) }, 500);
   }
 }

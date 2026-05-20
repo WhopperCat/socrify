@@ -6,13 +6,16 @@
 //
 // Env vars expected on Netlify:
 //   ANTHROPIC_API_KEY          (manually added)
-//   SUPABASE_DATABASE_URL  OR  SUPABASE_URL        (Supabase extension auto-injects one of these)
+//   SUPABASE_URL               (Supabase extension auto-injects)
 //   SUPABASE_SERVICE_ROLE_KEY  (Supabase extension auto-injects)
 
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+// Prefer SUPABASE_URL (the REST API URL). SUPABASE_DATABASE_URL is the
+// PostgreSQL connection string injected by Netlify's native integration and
+// must not be passed to the JS client.
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.SUPABASE_DATABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -25,9 +28,14 @@ const LIMITS = {
   free:  60,   // per user
 };
 
-const supa = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
-  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })
-  : null;
+let supa = null;
+try {
+  if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    supa = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+  }
+} catch (_) {
+  // supa stays null; rate limiting is skipped (fail open)
+}
 
 function hashIp(ip) {
   // Hash with a stable salt so we don't store raw IPs.

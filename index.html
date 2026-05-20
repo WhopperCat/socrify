@@ -272,7 +272,7 @@ const GENERAL_SUBJECT = { id: 'general', label: 'General', icon: '💬', persona
 
 const MODES = [
   { id: 'tutor',    label: 'Tutor',    icon: '🎓', tagline: 'Get unstuck without getting the answer.' },
-  { id: 'research', label: 'Research', icon: '🔎', tagline: 'Sonnet deep-dive — 1 per day, ~30–60s of thinking.' },
+  { id: 'research', label: 'Research', icon: '🔎', tagline: 'Deep research with web search — 1 per day, ~20–25s.' },
 ];
 
 // ===== SYSTEM PROMPT BUILDERS =====
@@ -394,37 +394,47 @@ function buildResearchPrompt({ topic, profile, difficulty }) {
   const interests = profile?.interests?.length ? profile.interests.join(', ') : 'not specified';
   const firstName = profile?.first_name || 'the student';
 
-  return `You are Socrify in Research Mode, helping ${firstName} (${grade}, difficulty: ${difficulty}) explore a topic deeply.
+  return `You are Socrify Research, a deep-research assistant for ${firstName} (${grade}, difficulty: ${difficulty}). You have access to a web_search tool. Use it.
 
-# ABSOLUTE CORE RULE
-You will NEVER write the student's thesis, conclusion, or any finished prose they could submit as their own work. Your job is to open up the topic, not close it.
+# HOW TO WORK
+This is a deep-research turn — think of it like ChatGPT's research mode. Before you write the report, you should:
+1. Decompose the topic into 3–6 concrete sub-questions worth investigating.
+2. Run multiple web_search queries (you have up to 5 searches per turn — use 3–5) to cover those sub-questions from different angles. Each search should target a distinct sub-question, not paraphrase a previous one. Prefer authoritative sources: primary documents, peer-reviewed work, established encyclopedias, reputable journalism, official statistics, recognised institutions.
+3. Cross-check claims across at least two independent sources when something is contested.
+4. THEN write a thorough, well-structured report grounded in what you found.
 
-# WHAT YOU DO
-- Suggest angles, sub-topics, and related concepts they might not have considered.
-- Surface interesting tensions, debates, or contradictions worth exploring.
-- Point toward rabbit holes — without going down them for the student.
-- Ask probing questions that push the student toward forming their OWN position.
-- Help them notice the shape of what they don't yet understand.
+Do not skip searches because you "already know" the answer — the point is to ground the report in current, verifiable sources the student can follow.
 
-# WHAT YOU DO NOT DO
-- Write thesis statements, conclusions, introductions, or finished argumentative prose.
-- Hand them a polished take they could copy.
-- Tell them what to think. Always push them toward their own conclusion.
+# REPORT STRUCTURE
+Write a focused, substantive report (typically 600–1200 words — go deeper on substance than on length). Use this structure unless the topic clearly calls for a different shape:
 
-If asked "what should I argue" or "what's the answer", redirect: "What do you currently think, and why?" Then probe their reasoning.
+**Overview** — A short framing paragraph: what the topic is, why it matters, the scope you're covering.
 
-# RESPONSE FORMAT
-- Short paragraphs OR a small numbered list of 3–6 angles when suggesting directions.
-- Focused. One coherent line of thought per response.
-- Curious tone — never lecturing.
-- Plain prose, no markdown headings.
+**Key sub-topics / angles** — 3–6 numbered sections, each with a clear heading. For each: explain what it is, the most important facts, and what makes it interesting. Cite sources inline when you state non-obvious facts.
 
-# STUDENT CONTEXT
-- Interests: ${interests} — use these as entry points into dense topics.
-- Grade level: ${grade}
+**Debates & open questions** — Where do experts disagree? What's contested, what's settled? Surface tensions honestly — don't pretend consensus where there isn't any.
+
+**Suggested next steps for the student** — 3–5 concrete directions they could take this: specific sub-questions, types of sources to read, angles for an essay or project. This is where the Socrify spirit shows up — point them toward their own thinking.
+
+**Sources** — A clean numbered list of the most useful sources you actually drew from, with titles and URLs. Don't pad it with sources you didn't really use.
+
+# FORMATTING
+- Markdown is encouraged: **bold** for emphasis, ## headings for the major sections above, bullet/numbered lists for sub-points, > blockquotes for direct quotes from sources.
+- Cite sources inline naturally as you make claims — the system attaches citations to the text spans that reference them, so you don't need to invent footnote markers.
+- Keep prose tight. No filler, no "in this report we will…" throat-clearing.
+- ${grade}-appropriate vocabulary, but don't dumb the substance down. Use the student's interests (${interests}) for entry-point analogies where they genuinely fit.
+
+# WHAT YOU STILL WON'T DO
+Socrify never writes the student's submittable work for them. This means:
+- DO write the research landscape, the sub-topics, the debates, the evidence, the sources — all of that is research, not their essay.
+- DO NOT write a thesis statement, an essay introduction, a conclusion paragraph, or any prose deliberately shaped for them to paste into an assignment.
+- If they ask "what's my thesis" or "write my intro", redirect once: tell them you've laid out the landscape and ask which angle pulls them — then keep going if they push back, but never produce paste-ready assignment prose.
+
+# FOLLOW-UP TURNS
+If this is a follow-up message (not the opening topic), you do not need to re-run the full structure. Engage with what they asked: search again if their follow-up needs fresh evidence, otherwise answer directly with citations. Be willing to go deeper on a sub-topic or pivot if their interest shifts.
 
 # CURRENT TOPIC
-${topic ? `The student is researching: "${topic}"` : 'The student has not yet specified a topic. Ask them what they want to explore.'}`;
+${topic ? `The student wants to research: "${topic}". Open with the structured report described above.` : 'The student has not yet specified a topic. Ask them what they want to research.'}`;
 }
 
 // ===== API HELPER =====
@@ -871,6 +881,15 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps }) {
     localStorage.setItem('socrify_teaching_style', teachingStyle);
   }, [teachingStyle]);
 
+  // Live-sync teaching style into the active session so flipping the sidebar
+  // toggle actually changes how Socrify behaves on the next turn (instead of
+  // the session being frozen at whatever was selected when launch() ran).
+  useEffect(() => {
+    if (!sessionConfig) return;
+    if (sessionConfig.teachingStyle === teachingStyle) return;
+    setSessionConfig(prev => prev ? { ...prev, teachingStyle } : prev);
+  }, [teachingStyle, sessionConfig]);
+
   const orderedSubjects = useMemo(() => {
     const recent = recentSubjectIds.map(id => SUBJECTS.find(s => s.id === id)).filter(Boolean);
     const rest = SUBJECTS.filter(s => !recentSubjectIds.includes(s.id));
@@ -1152,9 +1171,11 @@ function AppEmptyState({ displayName, showAds }) {
 // ===== SESSION VIEW (router between Tutor / Research) =====
 function SessionView({ config, profile, isGuest, onExit }) {
   const Mode = config.mode === 'tutor' ? TutorMode : ResearchMode;
-  // Key forces a fresh mount whenever the user launches with new config —
-  // otherwise switching subjects mid-session would keep the old chat history.
-  const sessionKey = `${config.mode}-${config.subject.id}-${config.difficulty}-${config.teachingStyle || 'na'}`;
+  // Key forces a fresh mount when mode/subject/difficulty change — those
+  // genuinely reframe the session. teachingStyle is intentionally NOT in the
+  // key: the user can flip it mid-session and the live prop drives the system
+  // prompt for the next turn without wiping chat history.
+  const sessionKey = `${config.mode}-${config.subject.id}-${config.difficulty}`;
   return <Mode key={sessionKey} config={config} profile={profile} isGuest={isGuest} onExit={onExit} />;
 }
 
@@ -1323,11 +1344,61 @@ function AssistantTyping() {
   );
 }
 
+// Research-mode bubble: same shape as MessageBubble, plus a source list and
+// a small "searches run" badge so the student can see how much grounding the
+// report actually used.
+function ResearchMessage({ role, content, citations, searchCount }) {
+  if (role !== 'assistant') {
+    return (
+      <div className="flex justify-end fade-in">
+        <div className="student-bubble px-4 py-3 max-w-[80%] whitespace-pre-wrap leading-relaxed">{content}</div>
+      </div>
+    );
+  }
+  const hasCitations = Array.isArray(citations) && citations.length > 0;
+  return (
+    <div className="flex gap-3 fade-in">
+      <Logo className="w-9 h-9 mt-1 shrink-0" />
+      <div className="question-card p-4 flex-1 min-w-0">
+        <div className="flex items-center justify-between mb-2 gap-2">
+          <div className="text-[10px] font-bold tracking-wider text-muted">SOCRIFY · RESEARCH</div>
+          {searchCount > 0 && (
+            <div className="text-[10px] font-semibold tracking-wider px-2 py-0.5 rounded-full surface-2 text-muted">
+              {searchCount} {searchCount === 1 ? 'search' : 'searches'} run
+            </div>
+          )}
+        </div>
+        <div className="whitespace-pre-wrap leading-relaxed">{content}</div>
+        {hasCitations && (
+          <div className="mt-4 pt-3 border-t border-app">
+            <div className="text-[10px] font-bold tracking-wider text-muted mb-2">SOURCES</div>
+            <ol className="space-y-1.5 text-sm list-decimal pl-5">
+              {citations.map((c, i) => (
+                <li key={i} className="leading-snug break-words">
+                  <a
+                    href={c.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:underline"
+                    style={{ color: 'var(--accent)' }}
+                  >
+                    {c.title || c.url}
+                  </a>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ===== RESEARCH MODE =====
 function ResearchMode({ config, profile, isGuest, onExit }) {
   const [topic, setTopic] = useState('');
   const [topicLocked, setTopicLocked] = useState(false);
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState([]); // [{ role, content, citations?, searchCount? }]
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -1354,10 +1425,10 @@ function ResearchMode({ config, profile, isGuest, onExit }) {
     try {
       const initial = [{
         role: 'user',
-        content: `I want to research: "${topic.trim()}". Help me see the landscape — what angles, sub-topics, debates, and entry points should I consider? Don't give me a thesis.`
+        content: `Research topic: "${topic.trim()}". Run multiple web searches across different angles, then write the structured deep-research report described in your instructions — with inline citations and a sources list at the end.`
       }];
       const data = await callAI({ messages: initial, system: systemPrompt, mode: 'research', subject: config.subject.id });
-      setMessages([{ role: 'assistant', content: data.text }]);
+      setMessages([{ role: 'assistant', content: data.text, citations: data.citations || [], searchCount: data.searchCount || 0 }]);
     } catch (err) {
       setError(err.message);
       setTopicLocked(false);
@@ -1373,8 +1444,10 @@ function ResearchMode({ config, profile, isGuest, onExit }) {
     setInput('');
     setLoading(true);
     try {
-      const data = await callAI({ messages: newMessages, system: systemPrompt, mode: 'research', subject: config.subject.id });
-      setMessages([...newMessages, { role: 'assistant', content: data.text }]);
+      // Strip client-only fields (citations, searchCount) before sending to the API.
+      const apiMessages = newMessages.map(({ role, content }) => ({ role, content }));
+      const data = await callAI({ messages: apiMessages, system: systemPrompt, mode: 'research', subject: config.subject.id });
+      setMessages([...newMessages, { role: 'assistant', content: data.text, citations: data.citations || [], searchCount: data.searchCount || 0 }]);
     } catch (err) {
       setError(err.message);
     } finally { setLoading(false); }
@@ -1391,8 +1464,12 @@ function ResearchMode({ config, profile, isGuest, onExit }) {
         <div className="flex-1 flex items-center justify-center px-6 py-12">
           <div className="surface w-full max-w-xl p-7 rounded-2xl fade-in">
             <h2 className="text-2xl font-bold mb-1">What are you researching?</h2>
-            <p className="text-sm text-muted mb-2">Be as broad or specific as you want. We'll open up the landscape.</p>
-            <p className="text-xs text-muted mb-2">Research runs Claude Sonnet with extended thinking — each reply takes ~30–60 seconds.</p>
+            <p className="text-sm text-muted mb-3">Socrify will plan the topic, search the web across multiple angles, and write you a structured report with citations.</p>
+            <ul className="text-xs text-muted mb-3 space-y-1 list-disc pl-5">
+              <li>Overview, sub-topics, debates, sources — like ChatGPT's research mode.</li>
+              <li>Runs Claude Sonnet with extended thinking + up to 5 live web searches.</li>
+              <li>Takes ~20–25 seconds. Don't refresh while it's working.</li>
+            </ul>
             <p className="text-xs mb-5" style={{ color: 'var(--accent)' }}>Heads up: Research mode is limited to 1 deep dive per day. Make this topic count.</p>
             <textarea
               value={topic} onChange={e => setTopic(e.target.value)}
@@ -1401,7 +1478,7 @@ function ResearchMode({ config, profile, isGuest, onExit }) {
               autoFocus
             />
             <button onClick={lockTopicAndStart} disabled={!topic.trim() || loading} className="btn-primary w-full py-3 rounded-lg">
-              {loading ? 'Thinking…' : 'Start research session'}
+              {loading ? 'Researching…' : 'Start research session'}
             </button>
           </div>
         </div>
@@ -1422,15 +1499,17 @@ function ResearchMode({ config, profile, isGuest, onExit }) {
             </div>
           </div>
           <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-thin space-y-4 p-5 min-h-0">
-            {messages.map((m, i) => <MessageBubble key={i} role={m.role} content={m.content} label="SOCRIFY · RESEARCH" />)}
+            {messages.map((m, i) => (
+              <ResearchMessage key={i} role={m.role} content={m.content} citations={m.citations} searchCount={m.searchCount} />
+            ))}
             {loading && (
               <div className="flex gap-3 fade-in">
                 <Logo className="w-9 h-9 mt-1 shrink-0" animated />
                 <div className="question-card p-4 flex-1">
-                  <div className="text-[10px] font-bold tracking-wider text-muted mb-2">SOCRIFY · THINKING</div>
+                  <div className="text-[10px] font-bold tracking-wider text-muted mb-2">SOCRIFY · RESEARCHING</div>
                   <div className="text-sm text-muted flex items-center gap-2">
                     <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
-                    <span className="ml-2">Sonnet is exploring this — usually 30–60s.</span>
+                    <span className="ml-2">Searching the web and writing the report — usually ~20–25s.</span>
                   </div>
                 </div>
               </div>

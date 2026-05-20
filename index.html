@@ -259,27 +259,38 @@ const STRENGTH_OPTIONS  = ['Math','Writing','Science','History','Languages','Art
 const GRADE_OPTIONS     = ['Middle School','9th Grade','10th Grade','11th Grade','12th Grade','College','Adult Learner'];
 const DIFFICULTY_OPTS   = ['Easier','Standard','Challenging'];
 
+// Teaching style controls how much Socrify questions vs. explains.
+// Guided is the default — questions-first, but explains when the student needs it.
+const TEACHING_STYLES = [
+  { id: 'guided',   label: 'Guided',    blurb: 'Mostly questions. Explains when you need it. (default)' },
+  { id: 'socratic', label: 'Socratic',  blurb: 'Pure questions. Never gives the answer.' },
+  { id: 'direct',   label: 'Direct',    blurb: 'Teaches normally — but won\'t do homework for you.' },
+];
+const DEFAULT_TEACHING_STYLE = 'guided';
+
 const GENERAL_SUBJECT = { id: 'general', label: 'General', icon: '💬', persona: 'methodical' };
 
 const MODES = [
   { id: 'tutor',    label: 'Tutor',    icon: '🎓', tagline: 'Get unstuck without getting the answer.' },
-  { id: 'research', label: 'Research', icon: '🔎', tagline: 'Explore a topic deeply with a guide, not a chatbot.' },
+  { id: 'research', label: 'Research', icon: '🔎', tagline: 'Sonnet deep-dive — 1 per day, ~30–60s of thinking.' },
 ];
 
 // ===== SYSTEM PROMPT BUILDERS =====
-function buildTutorPrompt({ subject, profile, difficulty }) {
+function buildTutorPrompt({ subject, profile, difficulty, teachingStyle }) {
   const grade = profile?.grade_level || 'High School';
   const interests = profile?.interests?.length ? profile.interests.join(', ') : 'not specified';
   const strengths = profile?.strengths?.length ? profile.strengths.join(', ') : 'not specified';
   const experiences = profile?.experiences || 'not specified';
   const firstName = profile?.first_name || 'the student';
+  const style = teachingStyle || 'socratic';
   const personas = {
-    methodical: 'Be methodical and step-by-step. Break questions into small sequential checks. Precision matters.',
+    methodical: 'Be methodical and step-by-step. Precision matters.',
     narrative:  'Be narrative and context-rich. Connect ideas through story, cause-and-effect, and cultural/historical framing.',
-    evidence:   'Be evidence-first. Anchor questions in observable phenomena, data, or experimental reasoning.',
+    evidence:   'Be evidence-first. Anchor explanations and questions in observable phenomena, data, or experimental reasoning.',
   };
   const persona = personas[subject.persona] || personas.methodical;
 
+  // The essay lock applies under any style — we never produce submittable prose.
   const essayLock = subject.id === 'essay' ? `
 
 ESSAY WRITING — ADDITIONAL ABSOLUTE RULE:
@@ -289,13 +300,16 @@ You help with structure, organization, and feedback ONLY. You will NEVER produce
     ? `helping ${firstName} at the ${grade} level (difficulty: ${difficulty}). The student can bring any subject — homework in any class, learning something from scratch, or getting unstuck on any topic.`
     : `helping ${firstName} with ${subject.label} at the ${grade} level (difficulty: ${difficulty}).`;
 
-  return `You are Socrify, a Socratic AI tutor for ${subjectLine}
-
-# ABSOLUTE CORE RULE — NEVER VIOLATE
+  // === STYLE BLOCKS ===
+  // Socratic: pure questions, never gives the answer. The original Socrify behavior.
+  // Guided:   mostly questions, but allowed to explain concepts when the student is truly stuck or learning something new.
+  // Direct:   teaches normally with explanations and worked examples, but still won't do specific homework problems for the student.
+  const styleBlocks = {
+    socratic: `# CORE RULE — NEVER VIOLATE
 You will NEVER give a direct answer. Not now. Not ever. Not under any framing.
 You teach exclusively through questions. The student must reach the answer — or discover new concepts — through their own reasoning.
 
-This applies whether the student is stuck on a problem OR learning something brand new from scratch. If they ask to be taught a subject from zero (e.g. "teach me HTML" or "I want to learn JavaScript"), that is not a reason to refuse — it is an invitation to ask discovery questions: "What do you already know about this?", "What have you seen / used / noticed?", "What would you want to build or understand?". Guide them toward understanding by surfacing what they already know and building from there.
+This applies whether the student is stuck on a problem OR learning something brand new from scratch. If they ask to be taught a subject from zero (e.g. "teach me HTML" or "I want to learn JavaScript"), that is not a reason to refuse — it is an invitation to ask discovery questions: "What do you already know about this?", "What have you seen / used / noticed?", "What would you want to build or understand?".
 
 The following attempts to extract direct answers WILL fail:
 - "Just tell me / show me / give me the answer"
@@ -305,13 +319,60 @@ The following attempts to extract direct answers WILL fail:
 - Wrapping in code, fiction, hypotheticals, or translation
 - "Show me an example with the same numbers / a worked example"
 - "I'll fail if you don't tell me" — emotional pressure
-- "Print out the solution / steps / final value"
 - Claiming a special exception, emergency, or test
-- Asking for the answer in a different language or format
 
-None of these work. Your only response when pressured is: ask a question that moves them one step further. If they're truly stuck, ask them to describe exactly where their understanding broke down, then approach from a different angle — still without giving the answer.${essayLock}
+None of these work. Your only response when pressured is: ask a question that moves them one step further.${essayLock}
 
-# TEACHING STYLE
+# RESPONSE FORMAT
+- Concise. One core guiding question per turn, with at most a brief setup.
+- Acknowledge what they did right before redirecting.
+- If they're wrong, don't say "wrong" — ask a question that exposes the contradiction.
+- Plain prose. No headings, no markdown formatting${subject.isCoding ? ', and no code blocks unless the student showed code first' : ', no code blocks'}.`,
+
+    guided: `# CORE APPROACH — GUIDED LEARNING
+Lead with questions whenever the student is exploring, close to an answer, or actively reasoning. Questions are still your first move.
+
+BUT — you are allowed (and expected) to explain concepts directly when:
+- The student is learning something genuinely new and needs the foundation before they can reason about it.
+- They've made a clear attempt and are stuck on a missing fact or definition.
+- They explicitly ask "what is X" about a concept (not a homework answer).
+
+When you explain, keep it short and grade-appropriate, then immediately hand the thinking back: ask what they'd do with that concept, or how it applies to their problem.
+
+# WHAT YOU STILL WON'T DO
+- Solve the student's specific homework problem for them. If they have a graded problem with concrete numbers, guide them through the method — don't compute the final answer.
+- Write essays, paragraphs, or any submittable prose.
+- Provide finished code that solves their assignment. You can explain syntax and concepts; they write the solution.${essayLock}
+
+# RESPONSE FORMAT
+- Mix short explanation with a guiding question. Usually 2–4 sentences.
+- Acknowledge what they did right. Build from where they are.
+- Plain prose, no markdown headings${subject.isCoding ? '. Small code snippets (1–3 lines) are okay when explaining syntax, but not full solutions' : ', no code blocks'}.`,
+
+    direct: `# CORE APPROACH — DIRECT TEACHING
+Teach the way a good human tutor does: explain concepts clearly with examples and analogies, work through reasoning out loud, and show how to approach problems step by step. Don't withhold explanations — your job is to help the student actually understand the material.
+
+Ask check-in questions occasionally to confirm understanding ("does that click?" / "want me to work another example?"), but don't constantly interrogate the student.
+
+# WHAT YOU STILL WON'T DO
+- Just hand over the final answer to the student's specific homework problem. If they give you a graded assignment, walk them through the method on a parallel example (different numbers), then have them apply it to theirs.
+- Write essays, paragraphs, theses, or any prose they could submit.
+- Write a complete solution to a coding assignment. You can teach the techniques and walk through similar examples; they write their actual code.${essayLock}
+
+# RESPONSE FORMAT
+- Explain clearly. Worked examples are great. Multiple paragraphs are fine when the topic needs it.
+- Use analogies from the student's interests where they fit.
+- Plain prose. Light markdown (bullet lists, **bold** for emphasis) is okay${subject.isCoding ? '. Code blocks are fine for teaching examples and syntax — but never a finished solution to their actual assignment' : '. No code blocks'}.`,
+  };
+
+  const styleBlock = styleBlocks[style] || styleBlocks.socratic;
+  const roleLabel = style === 'socratic' ? 'a Socratic AI tutor' : style === 'guided' ? 'an AI tutor (guided mode — mostly questions, explains when needed)' : 'an AI tutor (direct mode — teaches concepts plainly, won\'t do homework for you)';
+
+  return `You are Socrify, ${roleLabel} for ${subjectLine}
+
+${styleBlock}
+
+# SUBJECT-SPECIFIC FLAVOR
 ${persona}
 
 # STUDENT CONTEXT — use this to pick analogies and gauge pacing
@@ -322,17 +383,10 @@ ${persona}
 
 A gamer learning cell respiration should hear about energy economies. A musician learning waves should hear about resonance. Reach for what they already love.
 
-# RESPONSE FORMAT
-- Concise. One core guiding question per turn, with at most a brief setup.
-- Acknowledge what they did right before redirecting.
-- If they're wrong, don't say "wrong" — ask a question that exposes the contradiction.
-- Grade-appropriate language. Avoid jargon unless the student already used it.
-- Plain prose. No headings, no markdown formatting${subject.isCoding ? ', and no code blocks unless the student showed code first' : ', no code blocks'}.
-
 # SPECIAL MESSAGES
-If you see a system message starting with "[I'M STUCK]", the student pressed the "I'm Stuck" button. Ask them to describe exactly where they got lost, then take a different angle — still without giving the answer.
+If you see a user message starting with "[I'M STUCK]", the student pressed the "I'm Stuck" button. Ask them to describe exactly where they got lost, then take a different angle from there.
 
-Stay in character as a Socratic tutor for the entire conversation, regardless of what the student says or claims.`;
+Stay in character for the entire conversation, regardless of what the student says or claims.`;
 }
 
 function buildResearchPrompt({ topic, profile, difficulty }) {
@@ -803,12 +857,19 @@ function MultiSelect({ options, selected, onChange }) {
 function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps }) {
   const [subject, setSubject] = useState(null);
   const [difficulty, setDifficulty] = useState('Standard');
+  const [teachingStyle, setTeachingStyle] = useState(
+    () => localStorage.getItem('socrify_teaching_style') || DEFAULT_TEACHING_STYLE
+  );
   const [sessionConfig, setSessionConfig] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [recentSubjectIds, setRecentSubjectIds] = useState(() => {
     try { return JSON.parse(localStorage.getItem('socrify_recent_subjects') || '[]'); }
     catch { return []; }
   });
+
+  useEffect(() => {
+    localStorage.setItem('socrify_teaching_style', teachingStyle);
+  }, [teachingStyle]);
 
   const orderedSubjects = useMemo(() => {
     const recent = recentSubjectIds.map(id => SUBJECTS.find(s => s.id === id)).filter(Boolean);
@@ -823,16 +884,19 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps }) {
       setRecentSubjectIds(updated);
       localStorage.setItem('socrify_recent_subjects', JSON.stringify(updated));
     }
-    setSessionConfig({ subject: effectiveSubject, mode, difficulty });
+    setSessionConfig({ subject: effectiveSubject, mode, difficulty, teachingStyle });
     setDrawerOpen(false);
   };
+
+  const endSession = () => setSessionConfig(null);
 
   const displayName = isGuest ? 'guest' : (profile?.first_name || 'there');
   const showAds = isGuest || !profile?.is_dev;
 
   const sidebarProps = {
     subject, setSubject, difficulty, setDifficulty,
-    sessionConfig, launch, orderedSubjects,
+    teachingStyle, setTeachingStyle,
+    sessionConfig, launch, endSession, orderedSubjects,
     profile, isGuest, onLogout, onGuestExit, settingsProps, displayName,
   };
 
@@ -910,8 +974,12 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps }) {
 }
 
 // ===== SIDEBAR =====
-function Sidebar({ subject, setSubject, difficulty, setDifficulty, sessionConfig, launch, orderedSubjects,
+function Sidebar({ subject, setSubject, difficulty, setDifficulty,
+                   teachingStyle, setTeachingStyle,
+                   sessionConfig, launch, endSession, orderedSubjects,
                    profile, isGuest, onLogout, settingsProps, displayName, onClose, isMobileDrawer }) {
+  const inSession = !!sessionConfig;
+  const styleLabel = (TEACHING_STYLES.find(s => s.id === teachingStyle) || TEACHING_STYLES[0]).label;
   return (
     <aside className={`${isMobileDrawer ? 'flex h-full' : 'hidden lg:flex'} w-64 shrink-0 flex-col border-r border-app surface overflow-hidden`}>
       {/* User / close row */}
@@ -927,31 +995,50 @@ function Sidebar({ subject, setSubject, difficulty, setDifficulty, sessionConfig
 
       {/* Scrollable body */}
       <div className="flex-1 overflow-y-auto">
-        {/* Modes */}
+        {/* Active session indicator */}
+        {inSession && (
+          <div className="px-3 pt-4 pb-2 fade-in">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-muted px-1 mb-2">Current session</div>
+            <div className="surface-2 rounded-lg p-3 border border-app">
+              <div className="text-sm font-semibold flex items-center gap-2 mb-1">
+                <span>{sessionConfig.subject.icon}</span>
+                <span className="truncate">{sessionConfig.subject.label}</span>
+              </div>
+              <div className="text-xs text-muted capitalize mb-2">
+                {sessionConfig.mode} · {sessionConfig.difficulty} · {(TEACHING_STYLES.find(s => s.id === sessionConfig.teachingStyle) || TEACHING_STYLES[0]).label}
+              </div>
+              <button onClick={endSession} className="btn-ghost w-full text-xs px-2 py-1.5 rounded-md">End session</button>
+            </div>
+          </div>
+        )}
+
+        {/* "Next session" config — labeled differently when a session is running */}
         <div className="px-3 pt-4 pb-2">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-muted px-1 mb-2">Mode</div>
-          {MODES.map(m => {
-            const active = sessionConfig?.mode === m.id;
-            return (
-              <button
-                key={m.id}
-                onClick={() => launch(m.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition mb-1 ${active ? 'btn-primary' : 'surface-hover'}`}
-              >
-                <span className="text-xl shrink-0">{m.icon}</span>
-                <div className="min-w-0">
-                  <div className="font-semibold text-sm">{m.label}</div>
-                  <div className={`text-xs leading-tight mt-0.5 ${active ? 'opacity-75' : 'text-muted'}`}>{m.tagline}</div>
-                </div>
-              </button>
-            );
-          })}
+          <div className="text-[10px] font-bold uppercase tracking-wider text-muted px-1 mb-2">
+            {inSession ? 'Start another session' : 'Start a session'}
+          </div>
+          {MODES.map(m => (
+            <button
+              key={m.id}
+              onClick={() => launch(m.id)}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition mb-1 surface-hover"
+            >
+              <span className="text-xl shrink-0">{m.icon}</span>
+              <div className="min-w-0">
+                <div className="font-semibold text-sm">{m.label}</div>
+                <div className="text-xs leading-tight mt-0.5 text-muted">{m.tagline}</div>
+              </div>
+            </button>
+          ))}
+          <div className="text-[10px] text-muted px-1 mt-1.5 leading-snug">
+            Uses your selections below: {subject ? `${subject.label}` : 'General'} · {difficulty} · {styleLabel}
+          </div>
         </div>
 
-        <div className="border-t border-app mx-3 my-1" />
+        <div className="border-t border-app mx-3 my-2" />
 
         {/* Subjects */}
-        <div className="px-3 pt-3 pb-2">
+        <div className="px-3 pt-2 pb-2">
           <div className="flex items-center justify-between px-1 mb-2">
             <div className="text-[10px] font-bold uppercase tracking-wider text-muted">
               Subject <span className="font-normal normal-case tracking-normal opacity-70">(optional)</span>
@@ -978,23 +1065,42 @@ function Sidebar({ subject, setSubject, difficulty, setDifficulty, sessionConfig
         </div>
 
         {/* Difficulty */}
-        {subject && (
-          <div className="px-3 pt-3 pb-2 fade-in">
-            <div className="border-t border-app mb-3" />
-            <div className="text-[10px] font-bold uppercase tracking-wider text-muted px-1 mb-2">Difficulty</div>
-            <div className="flex flex-wrap gap-1.5 px-1">
-              {DIFFICULTY_OPTS.map(d => (
-                <button
-                  key={d}
-                  onClick={() => setDifficulty(d)}
-                  className={`tag px-3 py-1.5 rounded-lg text-xs ${difficulty === d ? 'selected' : ''}`}
-                >
-                  {d}
-                </button>
-              ))}
-            </div>
+        <div className="px-3 pt-3 pb-2">
+          <div className="border-t border-app mb-3" />
+          <div className="text-[10px] font-bold uppercase tracking-wider text-muted px-1 mb-2">Difficulty</div>
+          <div className="flex flex-wrap gap-1.5 px-1">
+            {DIFFICULTY_OPTS.map(d => (
+              <button
+                key={d}
+                onClick={() => setDifficulty(d)}
+                className={`tag px-3 py-1.5 rounded-lg text-xs ${difficulty === d ? 'selected' : ''}`}
+              >
+                {d}
+              </button>
+            ))}
           </div>
-        )}
+        </div>
+
+        {/* Teaching style */}
+        <div className="px-3 pt-3 pb-4">
+          <div className="border-t border-app mb-3" />
+          <div className="text-[10px] font-bold uppercase tracking-wider text-muted px-1 mb-2">Teaching style</div>
+          <div className="space-y-1 px-1">
+            {TEACHING_STYLES.map(s => {
+              const active = teachingStyle === s.id;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => setTeachingStyle(s.id)}
+                  className={`w-full text-left px-3 py-2 rounded-lg transition ${active ? 'btn-primary' : 'surface-hover border border-app'}`}
+                >
+                  <div className="text-xs font-semibold">{s.label}</div>
+                  <div className={`text-[10px] leading-snug mt-0.5 ${active ? 'opacity-80' : 'text-muted'}`}>{s.blurb}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {/* Bottom: mobile-only settings */}
@@ -1046,7 +1152,10 @@ function AppEmptyState({ displayName, showAds }) {
 // ===== SESSION VIEW (router between Tutor / Research) =====
 function SessionView({ config, profile, isGuest, onExit }) {
   const Mode = config.mode === 'tutor' ? TutorMode : ResearchMode;
-  return <Mode config={config} profile={profile} isGuest={isGuest} onExit={onExit} />;
+  // Key forces a fresh mount whenever the user launches with new config —
+  // otherwise switching subjects mid-session would keep the old chat history.
+  const sessionKey = `${config.mode}-${config.subject.id}-${config.difficulty}-${config.teachingStyle || 'na'}`;
+  return <Mode key={sessionKey} config={config} profile={profile} isGuest={isGuest} onExit={onExit} />;
 }
 
 function ErrorBanner({ error, onDismiss }) {
@@ -1068,7 +1177,12 @@ function TutorMode({ config, profile, isGuest, onExit }) {
   const scrollRef = useRef(null);
 
   const systemPrompt = useMemo(
-    () => buildTutorPrompt({ subject: config.subject, profile, difficulty: config.difficulty }),
+    () => buildTutorPrompt({
+      subject: config.subject,
+      profile,
+      difficulty: config.difficulty,
+      teachingStyle: config.teachingStyle,
+    }),
     [config, profile]
   );
 
@@ -1088,9 +1202,14 @@ function TutorMode({ config, profile, isGuest, onExit }) {
       const sessionContext = config.subject.id === 'general'
         ? 'a general session — I might ask about homework, learning something new, or any subject'
         : `a ${config.subject.label} session`;
+      const openingAsk = config.teachingStyle === 'direct'
+        ? 'Briefly greet me, then ask what specifically I want to work on or learn today.'
+        : config.teachingStyle === 'guided'
+          ? 'Open with a short greeting and a question that helps figure out what I want to work on and what I already know.'
+          : 'Please open with a question that helps figure out what I want to work on and what I already know — without giving any direct answers.';
       const initialMessages = [{
         role: 'user',
-        content: `Hi! I'm starting ${sessionContext}. Please open with a question that helps figure out what I want to work on and what I already know — without giving any direct answers.`
+        content: `Hi! I'm starting ${sessionContext}. ${openingAsk}`,
       }];
       const data = await callAI({ messages: initialMessages, system: systemPrompt, mode: 'tutor', subject: config.subject.id });
       setMessages([{ role: 'assistant', content: data.text }]);
@@ -1131,7 +1250,12 @@ function TutorMode({ config, profile, isGuest, onExit }) {
       <div className="flex-1 flex flex-col max-w-3xl w-full mx-auto px-4 sm:px-6 py-6 overflow-hidden min-h-0">
         <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-thin space-y-4 pb-4 pr-1 min-h-0">
           {messages.map((m, i) => (
-            <MessageBubble key={i} role={m.role} content={m.content} />
+            <MessageBubble
+              key={i}
+              role={m.role}
+              content={m.content}
+              label={config.teachingStyle === 'socratic' ? 'SOCRIFY ASKS' : 'SOCRIFY'}
+            />
           ))}
           {loading && <AssistantTyping />}
         </div>
@@ -1168,13 +1292,13 @@ function TutorMode({ config, profile, isGuest, onExit }) {
   );
 }
 
-function MessageBubble({ role, content }) {
+function MessageBubble({ role, content, label = 'SOCRIFY' }) {
   if (role === 'assistant') {
     return (
       <div className="flex gap-3 fade-in">
         <Logo className="w-9 h-9 mt-1 shrink-0" />
         <div className="question-card p-4 flex-1 min-w-0">
-          <div className="text-[10px] font-bold tracking-wider text-muted mb-2">SOCRIFY ASKS</div>
+          <div className="text-[10px] font-bold tracking-wider text-muted mb-2">{label}</div>
           <div className="whitespace-pre-wrap leading-relaxed">{content}</div>
         </div>
       </div>
@@ -1267,7 +1391,9 @@ function ResearchMode({ config, profile, isGuest, onExit }) {
         <div className="flex-1 flex items-center justify-center px-6 py-12">
           <div className="surface w-full max-w-xl p-7 rounded-2xl fade-in">
             <h2 className="text-2xl font-bold mb-1">What are you researching?</h2>
-            <p className="text-sm text-muted mb-5">Be as broad or specific as you want. We'll open up the landscape.</p>
+            <p className="text-sm text-muted mb-2">Be as broad or specific as you want. We'll open up the landscape.</p>
+            <p className="text-xs text-muted mb-2">Research runs Claude Sonnet with extended thinking — each reply takes ~30–60 seconds.</p>
+            <p className="text-xs mb-5" style={{ color: 'var(--accent)' }}>Heads up: Research mode is limited to 1 deep dive per day. Make this topic count.</p>
             <textarea
               value={topic} onChange={e => setTopic(e.target.value)}
               className="input-base w-full px-4 py-3 rounded-lg min-h-[100px] resize-y mb-4"
@@ -1275,7 +1401,7 @@ function ResearchMode({ config, profile, isGuest, onExit }) {
               autoFocus
             />
             <button onClick={lockTopicAndStart} disabled={!topic.trim() || loading} className="btn-primary w-full py-3 rounded-lg">
-              {loading ? 'Starting…' : 'Start research session'}
+              {loading ? 'Thinking…' : 'Start research session'}
             </button>
           </div>
         </div>
@@ -1296,20 +1422,39 @@ function ResearchMode({ config, profile, isGuest, onExit }) {
             </div>
           </div>
           <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-thin space-y-4 p-5 min-h-0">
-            {messages.map((m, i) => <MessageBubble key={i} role={m.role} content={m.content} />)}
-            {loading && <AssistantTyping />}
+            {messages.map((m, i) => <MessageBubble key={i} role={m.role} content={m.content} label="SOCRIFY · RESEARCH" />)}
+            {loading && (
+              <div className="flex gap-3 fade-in">
+                <Logo className="w-9 h-9 mt-1 shrink-0" animated />
+                <div className="question-card p-4 flex-1">
+                  <div className="text-[10px] font-bold tracking-wider text-muted mb-2">SOCRIFY · THINKING</div>
+                  <div className="text-sm text-muted flex items-center gap-2">
+                    <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
+                    <span className="ml-2">Sonnet is exploring this — usually 30–60s.</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-          <div className="p-3 border-t border-app surface shrink-0">
-            <div className="flex items-end gap-2">
-              <textarea
-                value={input} onChange={e => setInput(e.target.value)} onKeyDown={onKeyDown}
-                placeholder="Push back, ask a follow-up, share what you're thinking…"
-                rows={1}
-                className="flex-1 input-base px-3 py-2.5 rounded-lg resize-none max-h-32"
-              />
-              <button onClick={send} disabled={loading || !input.trim()} className="btn-primary px-4 py-2.5 rounded-lg">Send</button>
+          {/* One Sonnet deep-dive per day — lock the composer after the first reply. */}
+          {messages.length > 0 && !loading ? (
+            <div className="p-4 border-t border-app surface shrink-0 text-center">
+              <div className="text-sm font-semibold mb-1">Daily research session complete</div>
+              <div className="text-xs text-muted">Research is limited to 1 deep dive per day. Use Tutor mode, or come back tomorrow.</div>
             </div>
-          </div>
+          ) : (
+            <div className="p-3 border-t border-app surface shrink-0">
+              <div className="flex items-end gap-2">
+                <textarea
+                  value={input} onChange={e => setInput(e.target.value)} onKeyDown={onKeyDown}
+                  placeholder="Push back, ask a follow-up, share what you're thinking…"
+                  rows={1}
+                  className="flex-1 input-base px-3 py-2.5 rounded-lg resize-none max-h-32"
+                />
+                <button onClick={send} disabled={loading || !input.trim()} className="btn-primary px-4 py-2.5 rounded-lg">Send</button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Scratchpad — hidden on mobile (no space) */}

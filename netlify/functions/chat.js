@@ -20,10 +20,17 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const TUTOR_MODEL = 'claude-haiku-4-5-20251001';
 const RESEARCH_MODEL = 'claude-sonnet-4-6';
 const TUTOR_MAX_TOKENS = 1024;
-// Research: extended thinking budget + room for a thorough response.
-// max_tokens must be strictly greater than thinking budget.
-const RESEARCH_THINKING_BUDGET = 8000;
-const RESEARCH_MAX_TOKENS = 12000;
+// Research: Sonnet with extended thinking + server-side web search. Closest
+// thing the Messages API has to ChatGPT-style deep research — Claude plans,
+// searches the web, reads results, then writes a cited report.
+//
+// Tuned to fit inside Netlify's 26s synchronous-function ceiling. Each web
+// search adds ~2–4s of wall-clock time, so we cap searches at 5 and keep the
+// thinking budget modest. If we later move this proxy to a streaming function
+// (no 26s cap), bump these up. max_tokens must be strictly > thinking budget.
+const RESEARCH_THINKING_BUDGET = 3000;
+const RESEARCH_MAX_TOKENS = 10000;
+const RESEARCH_WEB_SEARCH_MAX_USES = 5;
 
 // Rate limit policy (hourly windows)
 const LIMITS = {
@@ -211,8 +218,10 @@ exports.handler = async (event) => {
     }
   }
 
-  // Pick model + token budget by mode. Research runs Sonnet with extended thinking
-  // so it can do real exploration; Tutor runs Haiku for snappy back-and-forth.
+  // Pick model + token budget by mode. Research runs Sonnet with extended
+  // thinking AND the server-side web_search tool so it can plan, search
+  // multiple times, read sources, and write a cited report. Tutor runs Haiku
+  // for snappy back-and-forth, no tools.
   const isResearch = mode === 'research';
   const requestBody = {
     model: isResearch ? RESEARCH_MODEL : TUTOR_MODEL,
@@ -222,6 +231,11 @@ exports.handler = async (event) => {
   };
   if (isResearch) {
     requestBody.thinking = { type: 'enabled', budget_tokens: RESEARCH_THINKING_BUDGET };
+    requestBody.tools = [{
+      type: 'web_search_20250305',
+      name: 'web_search',
+      max_uses: RESEARCH_WEB_SEARCH_MAX_USES,
+    }];
   }
 
   // Call Anthropic
@@ -250,16 +264,35 @@ exports.handler = async (event) => {
     // Log AFTER successful call so failed calls don't burn quota
     await logCall({ userId: user?.id, ipHash, mode, subject });
 
-    const text = (data.content || [])
+    const blocks = data.content || [];
+    const text = blocks
       .filter(b => b.type === 'text')
       .map(b => b.text)
       .join('\n');
+
+    // Pull web_search citations out of text blocks. Each cited claim is a
+    // text block with a `citations` array referencing the URLs it drew from.
+    // We dedupe by URL so the same source isn't listed five times in the UI.
+    const citationsByUrl = new Map();
+    for (const b of blocks) {
+      if (b.type !== 'text' || !Array.isArray(b.citations)) continue;
+      for (const c of b.citations) {
+        if (c?.type !== 'web_search_result_location' || !c.url) continue;
+        if (!citationsByUrl.has(c.url)) {
+          citationsByUrl.set(c.url, { url: c.url, title: c.title || c.url });
+        }
+      }
+    }
+    const citations = Array.from(citationsByUrl.values());
+    const searchCount = data?.usage?.server_tool_use?.web_search_requests || 0;
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text,
+        citations,
+        searchCount,
         stop_reason: data.stop_reason,
         usage: data.usage,
       }),

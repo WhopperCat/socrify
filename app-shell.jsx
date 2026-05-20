@@ -24,6 +24,88 @@ const TEACHING_STYLES = [
 const DIFFICULTIES = ['Easier', 'Standard', 'Challenging'];
 
 /* ===========================================================
+   API helpers
+   =========================================================== */
+function buildSystemPrompt(config, openerText) {
+  const { subject, mode, teachingStyle, difficulty } = config;
+  const subjectName = subject.label;
+
+  const openerCtx = openerText
+    ? `\n\nYou opened this session with: "${openerText}"`
+    : '';
+
+  if (mode === 'research') {
+    return `You are Socrify in Research mode. You synthesise information accurately and cite your sources.
+
+Subject area: ${subjectName}
+Difficulty: ${difficulty}
+
+Guidelines:
+- Search for current, reliable sources on the topic
+- Present findings in clear sections; use headings when the content warrants it
+- Cite sources inline and list them at the end
+- Be honest about uncertainty and limitations
+- Do not write essay intros or thesis statements unless explicitly asked${openerCtx}`;
+  }
+
+  const styleGuide = {
+    guided:   'Guide with a mix of questions and brief explanations. Explain when the student is genuinely stuck, but always aim to restore their agency.',
+    socratic: 'Use only questions — never give the answer directly. If the student asks for the answer, respond with a question that helps them discover it themselves.',
+    direct:   'Teach clearly and explain concepts fully, but never complete assignments for the student.',
+  }[teachingStyle] || '';
+
+  const difficultyGuide = {
+    'Easier':      'Use simple language and small steps. Assume little prior knowledge and offer plenty of encouragement.',
+    'Standard':    'Pitch explanations for a capable student. Not too simple, not overly technical.',
+    'Challenging': 'Use precise vocabulary, deeper nuance, and push the student to think rigorously.',
+  }[difficulty] || '';
+
+  return `You are Socrify, an AI tutor specialising in ${subjectName}.
+
+Teaching style: ${styleGuide}
+Difficulty: ${difficultyGuide}
+
+Rules:
+- Keep replies concise — one or two short paragraphs, usually ending with a question
+- Never complete the student's work for them
+- Give hints when stuck, not full answers
+- Stay focused on the subject${openerCtx}`;
+}
+
+function buildApiMessages(messages) {
+  // API requires conversation to start with a user message.
+  // Skip any leading tutor seed and map roles.
+  const firstStudentIdx = messages.findIndex(m => m.role === 'student');
+  if (firstStudentIdx === -1) return [];
+  return messages.slice(firstStudentIdx).map(m => ({
+    role: m.role === 'student' ? 'user' : 'assistant',
+    content: m.content,
+  }));
+}
+
+async function callChatApi(messages, config) {
+  const openerText = messages[0]?.role === 'tutor' ? messages[0].content : null;
+  const res = await fetch('/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: buildApiMessages(messages),
+      system: buildSystemPrompt(config, openerText),
+      mode: config.mode,
+      subject: config.subject.id,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    const msg = data.message || data.error || 'Request failed';
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+/* ===========================================================
    APP SHELL — frames dashboard + session
    =========================================================== */
 function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, variant, fontSize, setFontSize, reduceMotion, setReduceMotion }) {
@@ -33,9 +115,9 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
   const [mode, setMode] = React.useState('tutor');
   const [sessionConfig, setSessionConfig] = React.useState(null);
 
-  const launch = (m) => {
+  const launch = (m, initialTopic = '') => {
     const sub = subject || GENERAL;
-    setSessionConfig({ subject: sub, mode: m, difficulty, teachingStyle });
+    setSessionConfig({ subject: sub, mode: m, difficulty, teachingStyle, initialTopic });
   };
   const endSession = () => setSessionConfig(null);
   const displayName = isGuest ? 'guest' : (profile?.first_name || 'friend');
@@ -281,7 +363,7 @@ function Dashboard({ displayName, subject, setSubject, difficulty, teachingStyle
   const placeholder = mode === 'tutor'
     ? `What do you want to work on in ${effectiveSubject.label.toLowerCase()}?`
     : `Pick a topic to research deeply…`;
-  const submit = () => onLaunch(mode);
+  const submit = () => onLaunch(mode, topic.trim());
 
   return (
     <div className="bg-paper grain" style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
@@ -428,24 +510,47 @@ function SessionView({ config, onExit }) {
   const [messages, setMessages] = React.useState(() => seedMessages(config));
   const [input, setInput] = React.useState('');
   const [thinking, setThinking] = React.useState(false);
+  const [error, setError] = React.useState(null);
   const scrollRef = React.useRef(null);
+  const didAutoSend = React.useRef(false);
 
   React.useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, thinking]);
 
   const send = (overrideText) => {
-    const text = (overrideText ?? input).trim();
-    if (!text) return;
+    const text = (overrideText !== undefined ? overrideText : input).trim();
+    if (!text || thinking) return;
     const userMsg = { role: 'student', content: text, id: Date.now() };
-    setMessages(m => [...m, userMsg]);
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
     setInput('');
     setThinking(true);
-    setTimeout(() => {
-      setMessages(m => [...m, { role: 'tutor', content: nextTutorReply(text, config), id: Date.now() + 1 }]);
-      setThinking(false);
-    }, 1000 + Math.random() * 800);
+    setError(null);
+    callChatApi(newMessages, config)
+      .then(data => {
+        setMessages(m => [...m, {
+          role: 'tutor',
+          content: data.text,
+          citations: data.citations || [],
+          id: Date.now() + 1,
+        }]);
+      })
+      .catch(err => {
+        setError(err.message || 'Something went wrong. Please try again.');
+      })
+      .finally(() => {
+        setThinking(false);
+      });
   };
+
+  // Auto-send the topic that was typed on the dashboard
+  React.useEffect(() => {
+    if (config.initialTopic && !didAutoSend.current) {
+      didAutoSend.current = true;
+      send(config.initialTopic);
+    }
+  }, []);
 
   return (
     <div className="bg-paper" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -494,6 +599,22 @@ function SessionView({ config, onExit }) {
             <QuickAction onClick={() => send('Different angle?')}>Different angle</QuickAction>
           </div>
 
+          {/* Error display */}
+          {error && (
+            <div style={{
+              marginBottom: 10, padding: '10px 14px', borderRadius: 10,
+              background: 'var(--danger-soft, #fff0f0)', border: '1px solid var(--danger, #dc2626)',
+              color: 'var(--danger, #dc2626)', fontSize: 13.5,
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+            }}>
+              <span>{error}</span>
+              <button onClick={() => setError(null)} style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'inherit', fontSize: 16, lineHeight: 1, padding: '0 2px',
+              }}>×</button>
+            </div>
+          )}
+
           <div className="card" style={{ padding: 4, borderRadius: 14, boxShadow: 'var(--shadow)' }}>
             <textarea
               value={input}
@@ -507,7 +628,7 @@ function SessionView({ config, onExit }) {
               <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
                 ↵ to send · ⇧↵ for newline
               </div>
-              <button onClick={() => send()} className="btn btn-accent btn-sm" disabled={!input.trim()}>
+              <button onClick={() => send()} className="btn btn-accent btn-sm" disabled={!input.trim() || thinking}>
                 Send <span aria-hidden>↵</span>
               </button>
             </div>
@@ -540,13 +661,14 @@ function Message({ msg, isFirst }) {
       </div>
     );
   }
-  // Tutor — Socratic question framing
+  // Tutor / research response
+  const hasCitations = msg.citations && msg.citations.length > 0;
   return (
     <div className="fade-in-up" style={{ display: 'flex', gap: 14, paddingRight: '8%' }}>
       <div style={{ flexShrink: 0, paddingTop: 4 }}>
         <SparkMark size={26} style={{ color: 'var(--accent)' }} />
       </div>
-      <div>
+      <div style={{ flex: 1, minWidth: 0 }}>
         {isFirst && (
           <div className="eyebrow" style={{ marginBottom: 8 }}>Socrify · opening question</div>
         )}
@@ -554,10 +676,28 @@ function Message({ msg, isFirst }) {
           margin: 0,
           fontFamily: 'var(--font-sans)',
           fontSize: 16, lineHeight: 1.55, color: 'var(--text)',
-          fontWeight: 400,
+          fontWeight: 400, whiteSpace: 'pre-wrap',
         }}>
           {msg.content}
         </p>
+        {hasCitations && (
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+            <div className="eyebrow" style={{ marginBottom: 8 }}>Sources</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {msg.citations.map((c, i) => (
+                <a key={i} href={c.url} target="_blank" rel="noopener noreferrer" style={{
+                  fontSize: 12.5, color: 'var(--accent)', textDecoration: 'none',
+                  display: 'flex', alignItems: 'baseline', gap: 6,
+                }}>
+                  <span style={{ color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{i + 1}</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {c.title || c.url}
+                  </span>
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -577,7 +717,7 @@ function ThinkingIndicator({ mode }) {
   );
 }
 
-/* ---------- demo content ---------- */
+/* ---------- session seed ---------- */
 function seedMessages(config) {
   const opener = config.mode === 'research'
     ? 'What topic would you like me to research? I\'ll pull from current sources and give you a structured report — but no thesis statements or essay intros.'
@@ -587,14 +727,6 @@ function seedMessages(config) {
         ? 'Where would you like to start? With a place, a time, or a question that\'s been bothering you?'
         : 'What\'s the problem you\'re trying to crack? Tell me what you\'ve tried so far.');
   return [{ id: 1, role: 'tutor', content: opener }];
-}
-
-function nextTutorReply(student, config) {
-  const stuck = /stuck|don.?t know/i.test(student);
-  const ask   = /tell me|just give|answer/i.test(student);
-  if (ask) return 'Nice try — that\'s not how this works. What\'s the part you already understand? Start there.';
-  if (stuck) return 'Totally fine. Take a different angle: forget the problem for a sec — what\'s one thing about this topic that\'s ever made sense to you?';
-  return 'Interesting. Now zoom in: which part of what you just said feels least certain to you, and why?';
 }
 
 Object.assign(window, { AppShell, Dashboard, SessionView });

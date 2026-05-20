@@ -541,53 +541,87 @@ function Landing({ onSignIn, onGuest, settingsProps }) {
 // ===== AUTH =====
 function Auth({ onBack }) {
   const [mode, setMode] = useState('signin'); // signin | signup
-  const [username, setUsername] = useState('');
+  // signup only: 'email' uses real email auth; 'username' uses synthetic-email edge function
+  const [signupMethod, setSignupMethod] = useState('email');
+  const [identifier, setIdentifier] = useState(''); // email or username depending on context
   const [password, setPassword] = useState('');
-  const [email, setEmail] = useState(''); // optional
+  const [recoveryEmail, setRecoveryEmail] = useState(''); // only shown on username signup
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [confirmed, setConfirmed] = useState(false); // email confirmation pending
+
+  const looksLikeEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+
+  const switchMode = (next) => { setMode(next); setError(''); setIdentifier(''); setPassword(''); setRecoveryEmail(''); setConfirmed(false); };
+  const switchSignupMethod = (m) => { setSignupMethod(m); setError(''); setIdentifier(''); };
 
   const submit = async (e) => {
     e.preventDefault();
     setError('');
-    if (!username || !password) { setError('Username and password are required.'); return; }
-    if (mode === 'signup') {
-      if (!/^[a-zA-Z0-9_-]{3,20}$/.test(username)) {
-        setError('Username: 3–20 chars, letters/numbers/_/- only.'); return;
-      }
-      if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
-    }
+    if (!identifier || !password) { setError('Please fill in all required fields.'); return; }
+    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
+
     setLoading(true);
     try {
-      const fakeEmail = usernameToEmail(username);
       if (mode === 'signin') {
-        const { error } = await supa.auth.signInWithPassword({ email: fakeEmail, password });
-        if (error) {
-          if (/invalid login credentials/i.test(error.message)) {
-            throw new Error("That username and password don't match an account. Passwords are case-sensitive — double-check, or create a new account if you haven't yet.");
+        // Accept email or username: detect by presence of @
+        const authEmail = looksLikeEmail(identifier) ? identifier.trim() : usernameToEmail(identifier);
+        const { error: siErr } = await supa.auth.signInWithPassword({ email: authEmail, password });
+        if (siErr) {
+          if (/invalid login credentials/i.test(siErr.message)) {
+            const kind = looksLikeEmail(identifier) ? 'email' : 'username';
+            throw new Error(`That ${kind} and password don't match an account. Passwords are case-sensitive — double-check, or create a new account.`);
           }
-          throw error;
+          throw siErr;
+        }
+      } else if (signupMethod === 'email') {
+        if (!looksLikeEmail(identifier)) { setError('Please enter a valid email address.'); setLoading(false); return; }
+        const { data, error: upErr } = await supa.auth.signUp({ email: identifier.trim(), password });
+        if (upErr) throw upErr;
+        if (data.session) {
+          // Auto-confirmed — onAuthStateChange handles routing
+        } else {
+          // Email confirmation required
+          setConfirmed(true);
         }
       } else {
-        // Use Supabase Edge Function (admin API) to bypass GoTrue email DNS validation.
+        // Username signup via edge function (bypasses GoTrue DNS validation)
+        if (!/^[a-zA-Z0-9_-]{3,20}$/.test(identifier)) {
+          setError('Username: 3–20 chars, letters/numbers/_/- only.'); setLoading(false); return;
+        }
+        const fakeEmail = usernameToEmail(identifier);
         const res = await fetch(`${CFG.SUPABASE_URL}/functions/v1/signup`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password, recovery_email: email || null }),
+          body: JSON.stringify({ username: identifier, password, recovery_email: recoveryEmail || null }),
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json.error || `Signup failed (HTTP ${res.status})`);
-        // Server created the confirmed account — sign in now.
         const { error: siErr } = await supa.auth.signInWithPassword({ email: fakeEmail, password });
         if (siErr) throw siErr;
       }
-      // onAuthStateChange handles routing
     } catch (err) {
       setError(err.message || String(err));
     } finally {
       setLoading(false);
     }
   };
+
+  if (confirmed) {
+    return (
+      <div className="min-h-screen flex flex-col">
+        <TopBar />
+        <main className="flex-1 flex items-center justify-center px-6 py-12">
+          <div className="surface w-full max-w-md p-7 rounded-2xl fade-in text-center">
+            <div className="text-4xl mb-4">📬</div>
+            <h2 className="text-2xl font-bold mb-2">Check your inbox</h2>
+            <p className="text-sm text-muted mb-5">We sent a confirmation link to <strong>{identifier}</strong>. Click it to activate your account, then come back to sign in.</p>
+            <button type="button" onClick={() => switchMode('signin')} className="btn-primary px-6 py-2.5 rounded-lg">Go to sign in</button>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -597,15 +631,41 @@ function Auth({ onBack }) {
           <button type="button" onClick={onBack} className="text-sm text-muted mb-3 hover:underline">← Back</button>
           <h2 className="text-2xl font-bold mb-1">{mode === 'signin' ? 'Welcome back' : 'Create your account'}</h2>
           <p className="text-sm text-muted mb-5">
-            {mode === 'signin' ? 'Pick up where you left off.' : 'No email required. Username and password is all we need.'}
+            {mode === 'signin'
+              ? 'Pick up where you left off.'
+              : signupMethod === 'email'
+                ? 'Sign up with your email and a password.'
+                : 'No email needed — just a username and password.'}
           </p>
 
-          <label className="block text-sm font-semibold mb-1.5">Username</label>
-          <input
-            value={username} onChange={e => setUsername(e.target.value)}
-            className="input-base w-full px-3 py-2.5 rounded-lg mb-4"
-            autoComplete="username" autoFocus required
-          />
+          {mode === 'signin' ? (
+            <>
+              <label className="block text-sm font-semibold mb-1.5">Email or username</label>
+              <input
+                value={identifier} onChange={e => setIdentifier(e.target.value)}
+                className="input-base w-full px-3 py-2.5 rounded-lg mb-4"
+                autoComplete="username" autoFocus required
+              />
+            </>
+          ) : signupMethod === 'email' ? (
+            <>
+              <label className="block text-sm font-semibold mb-1.5">Email</label>
+              <input
+                type="email" value={identifier} onChange={e => setIdentifier(e.target.value)}
+                className="input-base w-full px-3 py-2.5 rounded-lg mb-4"
+                autoComplete="email" autoFocus required
+              />
+            </>
+          ) : (
+            <>
+              <label className="block text-sm font-semibold mb-1.5">Username</label>
+              <input
+                value={identifier} onChange={e => setIdentifier(e.target.value)}
+                className="input-base w-full px-3 py-2.5 rounded-lg mb-4"
+                autoComplete="username" autoFocus required
+              />
+            </>
+          )}
 
           <label className="block text-sm font-semibold mb-1.5">Password</label>
           <input
@@ -614,14 +674,13 @@ function Auth({ onBack }) {
             autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} required
           />
 
-          {mode === 'signup' && (
+          {mode === 'signup' && signupMethod === 'username' && (
             <>
               <label className="block text-sm font-semibold mb-1.5">Recovery email <span className="font-normal text-muted">(optional)</span></label>
               <input
-                type="email" value={email} onChange={e => setEmail(e.target.value)}
+                type="email" value={recoveryEmail} onChange={e => setRecoveryEmail(e.target.value)}
                 className="input-base w-full px-3 py-2.5 rounded-lg mb-4"
-                autoComplete="email"
-                placeholder="If you lose your password"
+                autoComplete="email" placeholder="For password recovery"
               />
             </>
           )}
@@ -632,9 +691,29 @@ function Auth({ onBack }) {
             {loading ? 'Working…' : (mode === 'signin' ? 'Sign in' : 'Create account')}
           </button>
 
+          {mode === 'signup' && (
+            <div className="text-center text-sm text-muted mb-3">
+              {signupMethod === 'email' ? (
+                <>No email?{' '}
+                  <button type="button" onClick={() => switchSignupMethod('username')}
+                          className="font-semibold hover:underline" style={{ color: 'var(--accent)' }}>
+                    Sign up with a username instead
+                  </button>
+                </>
+              ) : (
+                <>Have an email?{' '}
+                  <button type="button" onClick={() => switchSignupMethod('email')}
+                          className="font-semibold hover:underline" style={{ color: 'var(--accent)' }}>
+                    Sign up with email instead
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           <div className="text-center text-sm text-muted">
             {mode === 'signin' ? "New here? " : 'Already have an account? '}
-            <button type="button" onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(''); }}
+            <button type="button" onClick={() => switchMode(mode === 'signin' ? 'signup' : 'signin')}
                     className="font-semibold hover:underline" style={{ color: 'var(--accent)' }}>
               {mode === 'signin' ? 'Create one' : 'Sign in'}
             </button>

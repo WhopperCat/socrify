@@ -210,7 +210,7 @@ const supa = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_PUBLISH
 // Supabase Auth requires email — we synthesize one from the username.
 // Real email is stored separately if the user provides one for password reset.
 const usernameToEmail = (u) =>
-  `${(u || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '')}@socrify.pro`;
+  `u-${(u || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '')}@socrify.pro`;
 
 // ===== DATA =====
 const SUBJECTS = [

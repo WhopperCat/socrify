@@ -8,12 +8,20 @@
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
 
-const SUPABASE_URL = process.env.SUPABASE_DATABASE_URL || process.env.SUPABASE_URL;
+// Prefer SUPABASE_URL (the REST API URL). SUPABASE_DATABASE_URL is the
+// PostgreSQL connection string injected by Netlify's native integration and
+// must not be passed to the JS client.
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.SUPABASE_DATABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const supaAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
-  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })
-  : null;
+let supaAdmin = null;
+try {
+  if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    supaAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+  }
+} catch (_) {
+  // supaAdmin stays null; handler returns 500 "Server configuration error"
+}
 
 const SIGNUP_LIMIT_PER_HOUR = 10;
 
@@ -77,52 +85,60 @@ exports.handler = async (event) => {
     return { statusCode: 500, headers: cors, body: JSON.stringify({ error: 'Server configuration error' }) };
   }
 
-  const ipHash = hashIp(getClientIp(event));
-  const rl = await checkSignupRateLimit(ipHash);
-  if (!rl.ok) {
+  try {
+    const ipHash = hashIp(getClientIp(event));
+    const rl = await checkSignupRateLimit(ipHash);
+    if (!rl.ok) {
+      return {
+        statusCode: 429,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Too many signup attempts. Please try again later.' }),
+      };
+    }
+
+    let body;
+    try { body = JSON.parse(event.body || '{}'); }
+    catch { return { statusCode: 400, headers: cors, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
+
+    const { username, password, recovery_email } = body;
+
+    if (!username || !/^[a-zA-Z0-9_-]{3,20}$/.test(username)) {
+      return { statusCode: 400, headers: cors, body: JSON.stringify({ error: 'Username: 3–20 chars, letters/numbers/_/- only.' }) };
+    }
+    if (!password || password.length < 6) {
+      return { statusCode: 400, headers: cors, body: JSON.stringify({ error: 'Password must be at least 6 characters.' }) };
+    }
+
+    const { error } = await supaAdmin.auth.admin.createUser({
+      email: usernameToEmail(username),
+      password,
+      email_confirm: true,
+      user_metadata: {
+        username,
+        recovery_email: recovery_email || null,
+      },
+    });
+
+    if (error) {
+      return {
+        statusCode: error.status || 400,
+        headers: { ...cors, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: error.message }),
+      };
+    }
+
+    await logSignup(ipHash);
+
     return {
-      statusCode: 429,
+      statusCode: 200,
       headers: { ...cors, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'Too many signup attempts. Please try again later.' }),
+      body: JSON.stringify({ ok: true }),
+    };
+  } catch (err) {
+    return {
+      statusCode: 500,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'Signup failed. Please try again.' }),
     };
   }
-
-  let body;
-  try { body = JSON.parse(event.body || '{}'); }
-  catch { return { statusCode: 400, headers: cors, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
-
-  const { username, password, recovery_email } = body;
-
-  if (!username || !/^[a-zA-Z0-9_-]{3,20}$/.test(username)) {
-    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: 'Username: 3–20 chars, letters/numbers/_/- only.' }) };
-  }
-  if (!password || password.length < 6) {
-    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: 'Password must be at least 6 characters.' }) };
-  }
-
-  const { error } = await supaAdmin.auth.admin.createUser({
-    email: usernameToEmail(username),
-    password,
-    email_confirm: true,
-    user_metadata: {
-      username,
-      recovery_email: recovery_email || null,
-    },
-  });
-
-  if (error) {
-    return {
-      statusCode: error.status || 400,
-      headers: { ...cors, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: error.message }),
-    };
-  }
-
-  await logSignup(ipHash);
-
-  return {
-    statusCode: 200,
-    headers: { ...cors, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ok: true }),
-  };
 };

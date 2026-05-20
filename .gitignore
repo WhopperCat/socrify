@@ -1,0 +1,11 @@
+# Netlify CLI local state (site link, dev server PID, etc.)
+.netlify/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

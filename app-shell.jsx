@@ -278,10 +278,15 @@ ${msgHtml}
 /* ===========================================================
    APP SHELL — frames dashboard + session
    =========================================================== */
+function loadSavedPrefs() {
+  try { return JSON.parse(localStorage.getItem('socrify_prefs') || '{}'); } catch { return {}; }
+}
+
 function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, variant, fontSize, setFontSize, reduceMotion, setReduceMotion }) {
+  const savedPrefs = loadSavedPrefs();
   const [subject, setSubject] = React.useState(null);
-  const [difficulty, setDifficulty] = React.useState('Standard');
-  const [teachingStyle, setTeachingStyle] = React.useState('guided');
+  const [difficulty, setDifficulty] = React.useState(savedPrefs.difficulty || 'Standard');
+  const [teachingStyle, setTeachingStyle] = React.useState(savedPrefs.teachingStyle || 'guided');
   const [mode, setMode] = React.useState('tutor');
   const [sessionConfig, setSessionConfig] = React.useState(null);
   const [history, setHistory] = React.useState(() => loadHistory());

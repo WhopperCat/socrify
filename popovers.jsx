@@ -376,9 +376,10 @@ function ThemeChip({ kind }) {
 }
 
 /* ── Account popover ── */
-function AccountPopover({ open, onClose, profile, isGuest, onLogout, onUpgrade, triggerRef, anchor = 'auto' }) {
+function AccountPopover({ open, onClose, profile, isGuest, onLogout, onUpgrade, onOpenScreen, notificationsOn, setNotificationsOn, triggerRef, anchor = 'auto' }) {
   const name = isGuest ? 'Guest session' : (profile?.first_name || 'Alex');
   const handle = isGuest ? '@guest' : (profile?.first_name ? `@${profile.first_name.toLowerCase()}` : '@alex');
+  const go = (screen) => { onClose(); onOpenScreen(screen); };
   return (
     <Popover open={open} onClose={onClose} anchor={anchor} width={320} triggerRef={triggerRef}>
       {/* Profile header */}
@@ -425,19 +426,24 @@ function AccountPopover({ open, onClose, profile, isGuest, onLogout, onUpgrade, 
       <PopoverDivider />
 
       <PopoverSection>
-        <PopoverItem icon={<IconUser />}      label="Profile & learning preferences" />
-        <PopoverItem icon={<IconBell />}      label="Notifications"          right={<Switch on={true} />} />
-        <PopoverItem icon={<IconShield />}    label="Privacy & data" />
-        <PopoverItem icon={<IconDownload />}  label="Export chat history" />
+        <PopoverItem icon={<IconUser />}      label="Profile & learning preferences" onClick={() => go('prefs')} />
+        <PopoverItem
+          icon={<IconBell />}
+          label="Notifications"
+          right={<Switch on={notificationsOn} />}
+          onClick={() => setNotificationsOn(!notificationsOn)}
+        />
+        <PopoverItem icon={<IconShield />}    label="Privacy & data"      onClick={() => go('privacy')} />
+        <PopoverItem icon={<IconDownload />}  label="Export chat history" onClick={() => go('export')} />
       </PopoverSection>
 
       <PopoverDivider />
 
       <PopoverSection>
-        <PopoverItem icon={<IconCard />}      label="Billing & subscription" />
-        <PopoverItem icon={<IconGift />}      label="Refer a friend"         hint="Earn 1 free research / week" />
-        <PopoverItem icon={<IconHelp />}      label="Help & support" />
-        <PopoverItem icon={<IconBook />}      label="Methods & sources"      hint="How Socrify teaches" />
+        <PopoverItem icon={<IconCard />}      label="Billing & subscription" onClick={() => go('soon-billing')} />
+        <PopoverItem icon={<IconGift />}      label="Refer a friend"         hint="Earn 1 free research / week" onClick={() => go('soon-refer')} />
+        <PopoverItem icon={<IconHelp />}      label="Help & support"         onClick={() => go('soon-help')} />
+        <PopoverItem icon={<IconBook />}      label="Methods & sources"      hint="How Socrify teaches" onClick={() => go('soon-methods')} />
       </PopoverSection>
 
       <PopoverDivider />
@@ -457,9 +463,310 @@ function AccountPopover({ open, onClose, profile, isGuest, onLogout, onUpgrade, 
         fontSize: 11, color: 'var(--text-muted)',
       }}>
         <span className="mono">v0.2.0 · BETA</span>
-        <a href="#" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>Status</a>
+        <a href="#" onClick={(e) => { e.preventDefault(); go('soon-status'); }} style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>Status</a>
       </div>
     </Popover>
+  );
+}
+
+/* ── Modal shell (centered dialog) ── */
+function Modal({ open, onClose, title, subtitle, children, width = 480 }) {
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return ReactDOM.createPortal(
+    <div
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1100,
+        background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 16,
+        animation: 'fadeInUp .15s ease',
+      }}
+    >
+      <div
+        className="scroll-thin"
+        style={{
+          width: '100%', maxWidth: width, maxHeight: 'calc(100vh - 32px)',
+          background: 'var(--surface)', color: 'var(--text)',
+          border: '1px solid var(--border)', borderRadius: 16,
+          boxShadow: 'var(--shadow-lg)', overflowY: 'auto',
+          display: 'flex', flexDirection: 'column',
+        }}
+      >
+        <div style={{
+          padding: '16px 20px', borderBottom: '1px solid var(--border)',
+          background: 'var(--surface-2)',
+          display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12,
+        }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 600 }}>{title}</div>
+            {subtitle && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{subtitle}</div>}
+          </div>
+          <button onClick={onClose} className="btn btn-bare btn-icon" title="Close" aria-label="Close" style={{ flexShrink: 0 }}>
+            <svg width="14" height="14" viewBox="0 0 20 20" {...stroke}><path d="M4 4l12 12M16 4L4 16"/></svg>
+          </button>
+        </div>
+        <div style={{ padding: 20 }}>{children}</div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ── Preferences (Profile & learning) ── */
+const PREFS_KEY = 'socrify_prefs';
+function loadPrefs() {
+  try { return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'); } catch { return {}; }
+}
+function savePrefs(p) {
+  localStorage.setItem(PREFS_KEY, JSON.stringify(p));
+}
+
+function PreferencesModal({ open, onClose, profile, isGuest }) {
+  const [prefs, setPrefs] = React.useState(() => loadPrefs());
+  const [name, setName] = React.useState(() => loadPrefs().displayName || profile?.first_name || (isGuest ? 'Guest' : ''));
+
+  React.useEffect(() => { if (open) { setPrefs(loadPrefs()); setName(loadPrefs().displayName || profile?.first_name || (isGuest ? 'Guest' : '')); } }, [open]);
+
+  const update = (patch) => setPrefs(p => ({ ...p, ...patch }));
+  const onSave = () => {
+    savePrefs({ ...prefs, displayName: name });
+    onClose();
+  };
+
+  const difficulty = prefs.difficulty || 'Standard';
+  const style = prefs.teachingStyle || 'guided';
+
+  return (
+    <Modal open={open} onClose={onClose} title="Profile & learning preferences" subtitle="Defaults applied to new sessions">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <div>
+          <label className="eyebrow" style={{ fontSize: 10, display: 'block', marginBottom: 6 }}>Display name</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={isGuest}
+            placeholder={isGuest ? 'Sign in to set a name' : 'Your name'}
+            style={{
+              width: '100%', padding: '10px 12px', borderRadius: 8,
+              border: '1px solid var(--border)', background: 'var(--surface-2)',
+              color: 'var(--text)', fontSize: 14, fontFamily: 'var(--font-sans)',
+              opacity: isGuest ? 0.55 : 1,
+            }}
+          />
+          {isGuest && <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 6 }}>Guest sessions use a temporary identity.</div>}
+        </div>
+
+        <div>
+          <label className="eyebrow" style={{ fontSize: 10, display: 'block', marginBottom: 8 }}>Default difficulty</label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+            {['Easier', 'Standard', 'Challenging'].map(d => {
+              const active = difficulty === d;
+              return (
+                <button key={d} onClick={() => update({ difficulty: d })} style={{
+                  padding: '8px 10px', borderRadius: 8,
+                  background: active ? 'var(--accent-soft)' : 'var(--surface-2)',
+                  border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border)'),
+                  color: active ? 'var(--accent-ink)' : 'var(--text-2)',
+                  fontSize: 12.5, fontWeight: 500, cursor: 'pointer',
+                  fontFamily: 'var(--font-sans)',
+                }}>{d}</button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <label className="eyebrow" style={{ fontSize: 10, display: 'block', marginBottom: 8 }}>Default teaching style</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {[
+              { id: 'guided',   label: 'Guided',   blurb: 'Mostly questions. Explains when you need it.' },
+              { id: 'socratic', label: 'Socratic', blurb: 'Pure questions. Never gives the answer.' },
+              { id: 'direct',   label: 'Direct',   blurb: "Teaches normally — but won't do your homework." },
+            ].map(o => {
+              const active = style === o.id;
+              return (
+                <button key={o.id} onClick={() => update({ teachingStyle: o.id })} style={{
+                  padding: '10px 12px', borderRadius: 8, textAlign: 'left',
+                  background: active ? 'var(--accent-soft)' : 'var(--surface-2)',
+                  border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border)'),
+                  color: active ? 'var(--accent-ink)' : 'var(--text-2)',
+                  cursor: 'pointer', fontFamily: 'var(--font-sans)',
+                }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 500 }}>{o.label}</div>
+                  <div style={{ fontSize: 11.5, color: active ? 'var(--accent-ink)' : 'var(--text-muted)', marginTop: 2 }}>{o.blurb}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+          <button onClick={onClose} className="btn btn-ghost btn-sm">Cancel</button>
+          <button onClick={onSave} className="btn btn-accent btn-sm">Save</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Privacy & data ── */
+function PrivacyModal({ open, onClose }) {
+  const [cleared, setCleared] = React.useState(false);
+  const [confirming, setConfirming] = React.useState(false);
+
+  React.useEffect(() => { if (open) { setCleared(false); setConfirming(false); } }, [open]);
+
+  const clearHistory = () => {
+    localStorage.removeItem('socrify_history');
+    setCleared(true);
+    setConfirming(false);
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Privacy & data" subtitle="What's stored on this device">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.55 }}>
+          Socrify stores chat history, learning preferences, and display settings in your browser's local storage. Nothing is uploaded unless you sign in.
+        </div>
+
+        <div style={{
+          padding: 14, borderRadius: 10, border: '1px solid var(--border)',
+          background: 'var(--surface-2)',
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Chat history</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+            Permanently delete every conversation saved on this device.
+          </div>
+          {cleared ? (
+            <div style={{ fontSize: 12.5, color: 'var(--accent-ink)' }}>Chat history cleared.</div>
+          ) : confirming ? (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 12.5, color: 'var(--text-2)', flex: 1 }}>This can't be undone.</span>
+              <button onClick={() => setConfirming(false)} className="btn btn-ghost btn-sm">Cancel</button>
+              <button onClick={clearHistory} className="btn btn-sm" style={{ background: 'var(--danger, #d23)', color: 'white', borderColor: 'var(--danger, #d23)' }}>Delete all</button>
+            </div>
+          ) : (
+            <button onClick={() => setConfirming(true)} className="btn btn-ghost btn-sm">Clear chat history</button>
+          )}
+        </div>
+
+        <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+          For full account-level data control, sign in and visit account settings.
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Export chat history ── */
+function exportHistoryAsJson() {
+  const history = JSON.parse(localStorage.getItem('socrify_history') || '[]');
+  const blob = new Blob([JSON.stringify(history, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), {
+    href: url, download: `socrify-history-${Date.now()}.json`,
+  });
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportHistoryAsMarkdown() {
+  const history = JSON.parse(localStorage.getItem('socrify_history') || '[]');
+  const date = new Date().toLocaleDateString();
+  let md = `# Socrify chat history\n\n_Exported ${date} · ${history.length} conversation${history.length === 1 ? '' : 's'}_\n\n---\n\n`;
+  history.forEach((conv, i) => {
+    md += `## ${conv.title || 'Untitled'}\n`;
+    md += `_${conv.mode || 'tutor'} · ${conv.subjectId || 'general'}${conv.difficulty ? ` · ${conv.difficulty}` : ''}${conv.teachingStyle ? ` · ${conv.teachingStyle}` : ''}_\n\n`;
+    const msgs = conv.messages || [];
+    msgs.forEach(m => {
+      const who = m.role === 'student' ? 'You' : 'Socrify';
+      md += `**${who}:** ${m.content || ''}\n\n`;
+    });
+    if (i < history.length - 1) md += `---\n\n`;
+  });
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), {
+    href: url, download: `socrify-history-${Date.now()}.md`,
+  });
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function ExportModal({ open, onClose }) {
+  const history = React.useMemo(() => {
+    if (!open) return [];
+    try { return JSON.parse(localStorage.getItem('socrify_history') || '[]'); } catch { return []; }
+  }, [open]);
+  const count = history.length;
+  const empty = count === 0;
+
+  return (
+    <Modal open={open} onClose={onClose} title="Export chat history" subtitle={`${count} conversation${count === 1 ? '' : 's'} on this device`}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {empty ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            No conversations to export yet. Start a session, then come back here.
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.5 }}>
+              Download every saved conversation as a single file.
+            </div>
+            <button onClick={exportHistoryAsMarkdown} className="btn btn-ghost" style={{ justifyContent: 'flex-start', textAlign: 'left' }}>
+              <div>
+                <div style={{ fontWeight: 500 }}>Markdown (.md)</div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Human-readable. Good for sharing or archiving.</div>
+              </div>
+            </button>
+            <button onClick={exportHistoryAsJson} className="btn btn-ghost" style={{ justifyContent: 'flex-start', textAlign: 'left' }}>
+              <div>
+                <div style={{ fontWeight: 500 }}>JSON (.json)</div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Full structured data. Useful for re-import.</div>
+              </div>
+            </button>
+          </>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+          <button onClick={onClose} className="btn btn-ghost btn-sm">Done</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Stub "coming soon" modal for the rest ── */
+const COMING_SOON_COPY = {
+  'soon-billing': { title: 'Billing & subscription', body: "Once Socrify Pro launches you'll manage your plan, payment method, and invoices here." },
+  'soon-refer':   { title: 'Refer a friend', body: 'Earn 1 free research / week for every friend who signs up. Referral codes roll out with the Pro launch.' },
+  'soon-help':    { title: 'Help & support', body: 'For now, please reach out at hello@socrify.app. A full help center is on the way.' },
+  'soon-methods': { title: 'Methods & sources', body: "Socrify teaches with the Socratic method — guiding through questions rather than handing over answers. A deeper write-up is coming soon." },
+  'soon-status':  { title: 'System status', body: 'All systems operational. A live status page is on the way.' },
+};
+function ComingSoonModal({ open, onClose, screen }) {
+  const copy = COMING_SOON_COPY[screen];
+  if (!copy) return null;
+  return (
+    <Modal open={open} onClose={onClose} title={copy.title}>
+      <div style={{ fontSize: 13.5, color: 'var(--text-2)', lineHeight: 1.6, marginBottom: 16 }}>{copy.body}</div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button onClick={onClose} className="btn btn-ghost btn-sm">Close</button>
+      </div>
+    </Modal>
   );
 }
 
@@ -564,11 +871,52 @@ function SettingsButton({ settingsProps, fontSize, setFontSize, reduceMotion, se
   );
 }
 
+const NOTIFICATIONS_KEY = 'socrify_notifications';
+function loadNotificationsEnabled() {
+  const v = localStorage.getItem(NOTIFICATIONS_KEY);
+  return v === null ? true : v === '1';
+}
+
 function AccountButton({ profile, isGuest, onLogout, onUpgrade, compact }) {
   const [open, setOpen] = React.useState(false);
+  const [screen, setScreen] = React.useState(null);
+  const [notificationsOn, setNotificationsOnState] = React.useState(loadNotificationsEnabled);
   const triggerRef = React.useRef(null);
   const name = isGuest ? 'Guest' : (profile?.first_name || 'Alex');
   const initial = name.charAt(0).toUpperCase();
+
+  const setNotificationsOn = (v) => {
+    setNotificationsOnState(v);
+    localStorage.setItem(NOTIFICATIONS_KEY, v ? '1' : '0');
+    if (v && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      try { Notification.requestPermission(); } catch {}
+    }
+  };
+
+  const screens = (
+    <>
+      <PreferencesModal open={screen === 'prefs'} onClose={() => setScreen(null)} profile={profile} isGuest={isGuest} />
+      <PrivacyModal open={screen === 'privacy'} onClose={() => setScreen(null)} />
+      <ExportModal open={screen === 'export'} onClose={() => setScreen(null)} />
+      <ComingSoonModal open={!!screen && screen.startsWith('soon-')} onClose={() => setScreen(null)} screen={screen} />
+    </>
+  );
+
+  const popover = (
+    <AccountPopover
+      open={open}
+      onClose={() => setOpen(false)}
+      profile={profile}
+      isGuest={isGuest}
+      onLogout={onLogout}
+      onUpgrade={onUpgrade}
+      onOpenScreen={setScreen}
+      notificationsOn={notificationsOn}
+      setNotificationsOn={setNotificationsOn}
+      triggerRef={triggerRef}
+      anchor={compact ? 'down' : 'up'}
+    />
+  );
 
   if (compact) {
     return (
@@ -580,7 +928,8 @@ function AccountButton({ profile, isGuest, onLogout, onUpgrade, compact }) {
           fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600,
           cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         }}>{initial}</button>
-        <AccountPopover open={open} onClose={() => setOpen(false)} profile={profile} isGuest={isGuest} onLogout={onLogout} onUpgrade={onUpgrade} triggerRef={triggerRef} anchor="down" />
+        {popover}
+        {screens}
       </>
     );
   }
@@ -611,7 +960,8 @@ function AccountButton({ profile, isGuest, onLogout, onUpgrade, compact }) {
         </span>
         <span style={{ color: 'var(--text-muted)', fontSize: 14 }}>⋯</span>
       </button>
-      <AccountPopover open={open} onClose={() => setOpen(false)} profile={profile} isGuest={isGuest} onLogout={onLogout} onUpgrade={onUpgrade} triggerRef={triggerRef} anchor="up" />
+      {popover}
+      {screens}
     </>
   );
 }

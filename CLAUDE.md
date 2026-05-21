@@ -2,9 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Code review
+## Code review — always read Gemini's feedback
 
-When a `github-webhook-activity` event arrives containing a comment from `gemini-code-assist[bot]`, read it and address any actionable feedback — fix the issue, commit, and push. Do this automatically without waiting to be asked.
+Every pull request gets a review from `gemini-code-assist[bot]`. **Whenever you open or push to a PR, fetch Gemini's review and address any actionable feedback** — fix the issue, commit, push. Do this automatically without waiting to be asked.
+
+How to check:
+- If a `github-webhook-activity` event arrives with a comment or review from `gemini-code-assist[bot]`, read and act on it immediately.
+- After opening a PR or pushing new commits, explicitly pull Gemini's review via the GitHub MCP tools (`mcp__github__pull_request_read` with `method: "get_reviews"` and `method: "get_review_comments"`, filtered to `gemini-code-assist[bot]`). Don't assume "no webhook yet" means "no feedback".
+- If Gemini's review hasn't landed yet, subscribe to PR activity (`mcp__github__subscribe_pr_activity`) so you're woken when it does, instead of polling.
+
+Reply on the PR only if a suggestion is wrong or can't be done — otherwise let the diff speak for itself.
 
 ## What this is
 

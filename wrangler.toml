@@ -7,8 +7,12 @@ workers_dev = true
 # Secrets (values never stored here — set once via: wrangler secret put <NAME>)
 # ANTHROPIC_API_KEY
 # SUPABASE_URL
-# SUPABASE_SERVICE_ROLE_KEY
+# SUPABASE_SERVICE_ROLE_KEY    (server-side only, bypasses RLS)
+# SUPABASE_ANON_KEY            (exposed to frontend via /config.js — MUST be the anon key, never the service role)
 # IP_HASH_SALT
+#
+# One-time Supabase dashboard step: Authentication → Providers → Email →
+# turn OFF "Confirm email" so signups work without an inbox round-trip during the beta.
 
 [assets]
 directory = "."

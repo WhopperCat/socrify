@@ -134,11 +134,13 @@ function buildApiMessages(messages) {
   });
 }
 
-async function callChatApi(messages, config) {
+async function callChatApi(messages, config, accessToken) {
   const openerText = messages[0]?.role === 'tutor' ? messages[0].content : null;
+  const headers = { 'Content-Type': 'application/json' };
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   const res = await fetch('/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       messages: buildApiMessages(messages),
       system: buildSystemPrompt(config, openerText),
@@ -284,7 +286,7 @@ function loadSavedPrefs() {
   try { return JSON.parse(localStorage.getItem('socrify_prefs') || '{}'); } catch { return {}; }
 }
 
-function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, variant, fontSize, setFontSize, reduceMotion, setReduceMotion }) {
+function AppShell({ profile, isGuest, tier, isDev, accessToken, onTierChange, onLogout, onGuestExit, onGoAuth, settingsProps, variant, fontSize, setFontSize, reduceMotion, setReduceMotion }) {
   const savedPrefs = loadSavedPrefs();
   const [subject, setSubject] = React.useState(null);
   const [difficulty, setDifficulty] = React.useState(savedPrefs.difficulty || 'Standard');
@@ -293,6 +295,7 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
   const [sessionConfig, setSessionConfig] = React.useState(null);
   const [history, setHistory] = React.useState(() => loadHistory());
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
+  const [limitInfo, setLimitInfo] = React.useState(null); // { tier, mode, used, cap, message }
 
   const updateConversation = React.useCallback((conv) => {
     setHistory(prev => {
@@ -305,11 +308,24 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
     });
   }, []);
 
-  const launch = (m, initialTopic = '', initialAttachments = []) => {
+  const launch = async (m, initialTopic = '', initialAttachments = []) => {
     const sub = subject || GENERAL;
+    const convId = 'conv_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+    // Gate every new conversation on the server-side daily cap.
+    const { ok, status, data } = await apiStartSession({
+      accessToken, mode: m, subject: sub.id, conversationId: convId,
+    });
+    if (!ok) {
+      if (status === 429) {
+        setLimitInfo({ tier: data.tier, mode: m, used: data.used, cap: data.cap, message: data.message });
+      } else {
+        setLimitInfo({ tier, mode: m, used: 0, cap: 0, message: data?.message || 'Could not start a new session. Try again in a moment.' });
+      }
+      return;
+    }
     setSessionConfig({
       subject: sub, mode: m, difficulty, teachingStyle, initialTopic, initialAttachments,
-      convId: 'conv_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+      convId,
     });
     setSidebarOpen(false);
   };
@@ -341,8 +357,13 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
       <AppTopBar
         displayName={displayName}
         isGuest={isGuest}
+        tier={tier}
+        isDev={isDev}
+        accessToken={accessToken}
+        onTierChange={onTierChange}
         onLogout={onLogout}
         onGuestExit={onGuestExit}
+        onGoAuth={onGoAuth}
         settingsProps={settingsProps}
         variant={variant}
         inSession={!!sessionConfig}
@@ -356,6 +377,15 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
         onToggleSidebar={() => setSidebarOpen(o => !o)}
         sidebarOpen={sidebarOpen}
       />
+      {limitInfo && (
+        <LimitReachedModal
+          info={limitInfo}
+          isGuest={isGuest}
+          onClose={() => setLimitInfo(null)}
+          onGoAuth={() => { setLimitInfo(null); onGoAuth && onGoAuth(); }}
+          onUpgrade={() => { setLimitInfo(null); window.dispatchEvent(new CustomEvent('socrify-open-upgrade')); }}
+        />
+      )}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
         {sidebarOpen && (
           <div className="sidebar-overlay mobile-only" onClick={() => setSidebarOpen(false)} aria-hidden="true" />
@@ -369,6 +399,11 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
           onLaunch={launch}
           profile={profile}
           isGuest={isGuest}
+          tier={tier}
+          isDev={isDev}
+          accessToken={accessToken}
+          onTierChange={onTierChange}
+          onGoAuth={onGoAuth}
           onLogout={isGuest ? onGuestExit : onLogout}
           history={history}
           activeConvId={activeConvId}
@@ -389,7 +424,7 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
               onLoadConversation={loadConversation}
             />
           ) : (
-            <SessionView config={sessionConfig} onExit={endSession} onConversationUpdate={updateConversation} />
+            <SessionView config={sessionConfig} onExit={endSession} onConversationUpdate={updateConversation} accessToken={accessToken} />
           )}
         </main>
       </div>
@@ -398,7 +433,7 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
 }
 
 /* ---------- top bar ---------- */
-function AppTopBar({ displayName, isGuest, onLogout, onGuestExit, settingsProps, variant, inSession, onExitSession, sessionConfig, profile, fontSize, setFontSize, reduceMotion, setReduceMotion, onToggleSidebar, sidebarOpen }) {
+function AppTopBar({ displayName, isGuest, tier, isDev, accessToken, onTierChange, onLogout, onGuestExit, onGoAuth, settingsProps, variant, inSession, onExitSession, sessionConfig, profile, fontSize, setFontSize, reduceMotion, setReduceMotion, onToggleSidebar, sidebarOpen }) {
   return (
     <header className="r-appbar" style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -442,8 +477,12 @@ function AppTopBar({ displayName, isGuest, onLogout, onGuestExit, settingsProps,
         <AccountButton
           profile={profile}
           isGuest={isGuest}
+          tier={tier}
+          isDev={isDev}
+          accessToken={accessToken}
+          onTierChange={onTierChange}
           onLogout={isGuest ? onGuestExit : onLogout}
-          onUpgrade={() => alert('Pro plan — coming soon')}
+          onGoAuth={onGoAuth}
           compact
         />
       </div>
@@ -473,7 +512,7 @@ function HamburgerIcon({ open }) {
 /* ===========================================================
    SIDEBAR — teaching controls + chat history
    =========================================================== */
-function Sidebar({ subject, setSubject, difficulty, setDifficulty, teachingStyle, setTeachingStyle, mode, setMode, inSession, onLaunch, profile, isGuest, onLogout, history, activeConvId, onLoadConversation, onNewChat, mobileOpen }) {
+function Sidebar({ subject, setSubject, difficulty, setDifficulty, teachingStyle, setTeachingStyle, mode, setMode, inSession, onLaunch, profile, isGuest, tier, isDev, accessToken, onTierChange, onGoAuth, onLogout, history, activeConvId, onLoadConversation, onNewChat, mobileOpen }) {
   return (
     <aside className={`app-sidebar ${mobileOpen ? 'is-open' : ''}`} style={{
       width: 272, flexShrink: 0, borderRight: '1px solid var(--border)',
@@ -576,8 +615,12 @@ function Sidebar({ subject, setSubject, difficulty, setDifficulty, teachingStyle
         <AccountButton
           profile={profile}
           isGuest={isGuest}
+          tier={tier}
+          isDev={isDev}
+          accessToken={accessToken}
+          onTierChange={onTierChange}
+          onGoAuth={onGoAuth}
           onLogout={onLogout}
-          onUpgrade={() => alert('Pro plan — coming soon')}
         />
       </div>
     </aside>
@@ -774,7 +817,7 @@ function getGreeting() {
 /* ===========================================================
    SESSION (chat) VIEW
    =========================================================== */
-function SessionView({ config, onExit, onConversationUpdate }) {
+function SessionView({ config, onExit, onConversationUpdate, accessToken }) {
   const convId = React.useRef(config.convId);
   const startedAt = React.useRef(config.restoredConv?.startedAt || new Date().toISOString());
 
@@ -839,7 +882,7 @@ function SessionView({ config, onExit, onConversationUpdate }) {
     setAttachments([]);
     setThinking(true);
     setError(null);
-    callChatApi(newMessages, config)
+    callChatApi(newMessages, config, accessToken)
       .then(data => {
         const tutorMsg = {
           role: 'tutor',
@@ -1233,4 +1276,60 @@ function seedMessages(config) {
   return [{ id: 1, role: 'tutor', content: opener }];
 }
 
-Object.assign(window, { AppShell, Dashboard, SessionView });
+/* ===========================================================
+   LimitReachedModal — shown when /session/start returns 429
+   =========================================================== */
+function LimitReachedModal({ info, isGuest, onClose, onGoAuth, onUpgrade }) {
+  if (!info) return null;
+  const { tier, mode, used, cap, message } = info;
+  const isResearch = mode === 'research';
+  const title = tier === 'guest'
+    ? 'Guest limit reached'
+    : tier === 'free'
+      ? 'Free plan limit reached'
+      : 'Daily limit reached';
+
+  return ReactDOM.createPortal(
+    <div
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1200,
+        background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 16, animation: 'fadeInUp .15s ease',
+      }}
+    >
+      <div style={{
+        width: '100%', maxWidth: 440,
+        background: 'var(--surface)', color: 'var(--text)',
+        border: '1px solid var(--border)', borderRadius: 16,
+        boxShadow: 'var(--shadow-lg)', overflow: 'hidden',
+      }}>
+        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
+          <div style={{ fontSize: 16, fontWeight: 600 }}>{title}</div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 4 }}>
+            {isResearch ? 'Research' : 'Tutor'} sessions today: <span className="mono">{used} / {cap}</span>
+          </div>
+        </div>
+        <div style={{ padding: 22, fontSize: 14, color: 'var(--text-2)', lineHeight: 1.55 }}>
+          {message}
+        </div>
+        <div style={{
+          padding: '14px 22px', borderTop: '1px solid var(--border)',
+          display: 'flex', gap: 8, justifyContent: 'flex-end',
+        }}>
+          <button onClick={onClose} className="btn btn-ghost btn-sm">Close</button>
+          {tier === 'guest' && (
+            <button onClick={onGoAuth} className="btn btn-accent btn-sm">Sign up free</button>
+          )}
+          {tier === 'free' && (
+            <button onClick={onUpgrade} className="btn btn-accent btn-sm">Upgrade to Pro · $8/mo</button>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+Object.assign(window, { AppShell, Dashboard, SessionView, LimitReachedModal });

@@ -253,25 +253,34 @@ function DialoguePreview() {
    =========================================================== */
 function Auth({ onBack, onSuccess, settingsProps, variant }) {
   const [mode, setMode] = useState('signin');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [firstName, setFirstName] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
     setError('');
-    if (!username || !password) { setError('Username and password are required.'); return; }
+    if (!email || !password) { setError('Email and password are required.'); return; }
     if (mode === 'signup') {
-      if (!/^[a-zA-Z0-9_-]{3,20}$/.test(username)) {
-        setError('Username: 3–20 chars, letters/numbers/_/- only.'); return;
+      if (!firstName || firstName.trim().length < 2) {
+        setError('Please enter a first name (2+ characters).'); return;
       }
       if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
     }
     setLoading(true);
-    // Demo flow — wire to supabase auth in production. Here we just continue.
-    setTimeout(() => { setLoading(false); onSuccess(); }, 600);
+    try {
+      const { error: authErr } = mode === 'signup'
+        ? await authSignUp({ email: email.trim(), password, firstName: firstName.trim() })
+        : await authSignIn({ email: email.trim(), password });
+      if (authErr) { setError(authErr.message); return; }
+      onSuccess(mode);
+    } catch (err) {
+      setError(err?.message || 'Something went wrong. Try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -297,8 +306,8 @@ function Auth({ onBack, onSuccess, settingsProps, variant }) {
             </h1>
             <p style={{ fontSize: 16, color: 'var(--text-2)', lineHeight: 1.5, margin: 0, maxWidth: '36ch' }}>
               {mode === 'signin'
-                ? 'Sign back in with your username. No email needed.'
-                : 'Just a username and password. Add a recovery email if you want one, skip it if you don\'t.'}
+                ? 'Sign in with the email you used last time.'
+                : 'Quick email + password. We use it for recovery, that\'s it.'}
             </p>
           </div>
 
@@ -314,20 +323,19 @@ function Auth({ onBack, onSuccess, settingsProps, variant }) {
               </div>
             </div>
 
-            <label style={labelStyle}>Username</label>
-            <input className="field" value={username} onChange={e => setUsername(e.target.value)} autoFocus autoComplete="username" placeholder="socrates_42" style={{ marginBottom: 14 }} />
+            {mode === 'signup' && (
+              <>
+                <label style={labelStyle}>First name</label>
+                <input className="field" value={firstName} onChange={e => setFirstName(e.target.value)} autoFocus autoComplete="given-name" placeholder="Alex" style={{ marginBottom: 14 }} />
+              </>
+            )}
+
+            <label style={labelStyle}>Email</label>
+            <input type="email" className="field" value={email} onChange={e => setEmail(e.target.value)} autoFocus={mode === 'signin'} autoComplete="email" placeholder="you@example.com" style={{ marginBottom: 14 }} />
 
             <label style={labelStyle}>Password</label>
             <input type="password" className="field" value={password} onChange={e => setPassword(e.target.value)} autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} placeholder="••••••••" style={{ marginBottom: 14 }} />
 
-            {mode === 'signup' && (
-              <>
-                <label style={labelStyle}>
-                  Recovery email <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span>
-                </label>
-                <input type="email" className="field" value={email} onChange={e => setEmail(e.target.value)} placeholder="if you lose your password" style={{ marginBottom: 14 }} />
-              </>
-            )}
 
             {error && (
               <div style={{

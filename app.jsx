@@ -22,7 +22,11 @@ function Root() {
   const [fontSize, setFontSize] = React.useState(() => Number(localStorage.getItem('socrify_fontsize')) || 100);
   const [reduceMotion, setReduceMotion] = React.useState(() => localStorage.getItem('socrify_reducemotion') === '1');
   const [isGuest, setIsGuest] = React.useState(false);
-  const [profile, setProfile] = React.useState(null);
+
+  const auth = useAuthSession();
+  const profile = auth.user
+    ? { first_name: auth.profile?.first_name || auth.user.email?.split('@')[0] || 'friend', email: auth.user.email }
+    : (isGuest ? { first_name: 'Guest' } : null);
 
   React.useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -45,11 +49,21 @@ function Root() {
 
   const goLanding   = () => { setIsGuest(false); setView('landing'); };
   const goAuth      = () => setView('auth');
-  const goOnboard   = () => setView('onboarding');
-  const goGuest     = () => { setIsGuest(true); setProfile({ first_name: 'Guest' }); setView('dashboard'); };
-  const onAuthOk    = () => { setIsGuest(false); setProfile({ first_name: 'Alex' }); setView('onboarding'); };
+  const goGuest     = () => { setIsGuest(true); setView('dashboard'); };
+  // After signup we send users through onboarding; after signin straight to dashboard.
+  const onAuthOk    = (mode) => { setIsGuest(false); setView(mode === 'signup' ? 'onboarding' : 'dashboard'); };
   const onOnboarded = () => setView('dashboard');
-  const logout      = () => { setProfile(null); setIsGuest(false); setView('landing'); };
+  const logout      = async () => {
+    await authSignOut();
+    setIsGuest(false);
+    setView('landing');
+  };
+
+  // If a real session is detected on first load (returning user), jump into the dashboard.
+  React.useEffect(() => {
+    if (!auth.ready) return;
+    if (auth.user && view === 'landing') setView('dashboard');
+  }, [auth.ready, auth.user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const variant = tweaks.logoVariant;
 
@@ -70,8 +84,13 @@ function Root() {
       variant={variant}
       profile={profile}
       isGuest={isGuest}
+      tier={isGuest ? 'guest' : auth.tier}
+      isDev={auth.isDev}
+      accessToken={auth.accessToken}
+      onTierChange={auth.refresh}
       onLogout={logout}
       onGuestExit={goLanding}
+      onGoAuth={goAuth}
       settingsProps={settingsProps}
       fontSize={fontSize}
       setFontSize={setFontSize}

@@ -2,6 +2,7 @@ name = "socrify"
 main = "worker.js"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
 
 # Secrets (values never stored here — set once via: wrangler secret put <NAME>)
 # ANTHROPIC_API_KEY

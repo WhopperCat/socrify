@@ -24,6 +24,41 @@ const TEACHING_STYLES = [
 const DIFFICULTIES = ['Easier', 'Standard', 'Challenging'];
 
 /* ===========================================================
+   HISTORY — localStorage persistence for guests
+   =========================================================== */
+const HISTORY_KEY = 'socrify_history';
+
+function loadHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+  } catch { return []; }
+}
+
+function saveHistory(entries) {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(entries));
+}
+
+function formatWhen(isoDate) {
+  const now = new Date();
+  const d = new Date(isoDate);
+  const diffMs = now - d;
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffMins < 2) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
+  return `${Math.round(diffDays / 7)}w ago`;
+}
+
+function deriveTitle(text) {
+  const clean = text.trim().replace(/^\[.*?\]\s*/, '');
+  return clean.length <= 60 ? (clean || 'Untitled') : clean.slice(0, 57) + '…';
+}
+
+/* ===========================================================
    API helpers
    =========================================================== */
 function buildSystemPrompt(config, openerText) {
@@ -114,12 +149,46 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
   const [teachingStyle, setTeachingStyle] = React.useState('guided');
   const [mode, setMode] = React.useState('tutor');
   const [sessionConfig, setSessionConfig] = React.useState(null);
+  const [history, setHistory] = React.useState(() => loadHistory());
+
+  const updateConversation = React.useCallback((conv) => {
+    setHistory(prev => {
+      const idx = prev.findIndex(h => h.id === conv.id);
+      const updated = idx >= 0
+        ? prev.map((h, i) => i === idx ? conv : h)
+        : [conv, ...prev];
+      saveHistory(updated);
+      return updated;
+    });
+  }, []);
 
   const launch = (m, initialTopic = '') => {
     const sub = subject || GENERAL;
-    setSessionConfig({ subject: sub, mode: m, difficulty, teachingStyle, initialTopic });
+    setSessionConfig({
+      subject: sub, mode: m, difficulty, teachingStyle, initialTopic,
+      convId: 'conv_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+    });
   };
+
+  const loadConversation = (conv) => {
+    const sub = SUBJECTS.find(s => s.id === conv.subjectId) || GENERAL;
+    setSubject(sub);
+    setMode(conv.mode);
+    setDifficulty(conv.difficulty || 'Standard');
+    setTeachingStyle(conv.teachingStyle || 'guided');
+    setSessionConfig({
+      subject: sub,
+      mode: conv.mode,
+      difficulty: conv.difficulty || 'Standard',
+      teachingStyle: conv.teachingStyle || 'guided',
+      initialTopic: '',
+      convId: conv.id,
+      restoredConv: conv,
+    });
+  };
+
   const endSession = () => setSessionConfig(null);
+  const activeConvId = sessionConfig?.convId ?? null;
   const displayName = isGuest ? 'guest' : (profile?.first_name || 'friend');
 
   return (
@@ -151,6 +220,10 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
           profile={profile}
           isGuest={isGuest}
           onLogout={isGuest ? onGuestExit : onLogout}
+          history={history}
+          activeConvId={activeConvId}
+          onLoadConversation={loadConversation}
+          onNewChat={endSession}
         />
         <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {!sessionConfig ? (
@@ -161,9 +234,11 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
               teachingStyle={teachingStyle}
               mode={mode} setMode={setMode}
               onLaunch={launch}
+              history={history}
+              onLoadConversation={loadConversation}
             />
           ) : (
-            <SessionView config={sessionConfig} onExit={endSession} />
+            <SessionView config={sessionConfig} onExit={endSession} onConversationUpdate={updateConversation} />
           )}
         </main>
       </div>
@@ -219,19 +294,7 @@ function AppTopBar({ displayName, isGuest, onLogout, onGuestExit, settingsProps,
 /* ===========================================================
    SIDEBAR — teaching controls + chat history
    =========================================================== */
-const FAKE_HISTORY = [
-  { id: 'h1', subj: 'Biology',  title: 'Why does my body break down sugar?',  when: '2h ago',   turns: 9,  active: false },
-  { id: 'h2', subj: 'History',  title: 'Bronze Age collapse — what really caused it?', when: 'Yesterday', turns: 14, active: false },
-  { id: 'h3', subj: 'Math',     title: 'Integration by parts',                 when: 'Mon',     turns: 6,  active: false },
-  { id: 'h4', subj: 'English',  title: 'Symbolism in The Great Gatsby',        when: 'Sun',     turns: 11, active: false },
-  { id: 'h5', subj: 'CS',       title: 'When to use recursion vs iteration',   when: '3d ago',  turns: 4,  active: false },
-  { id: 'h6', subj: 'Physics',  title: 'Why does ice float?',                  when: '4d ago',  turns: 7,  active: false },
-  { id: 'h7', subj: 'Geography', title: 'How rivers shape borders',            when: '1w ago',  turns: 5,  active: false },
-  { id: 'h8', subj: 'Essay',    title: 'Outline for my college app essay',     when: '2w ago',  turns: 12, active: false },
-];
-
-function Sidebar({ subject, setSubject, difficulty, setDifficulty, teachingStyle, setTeachingStyle, mode, setMode, inSession, onLaunch, sessionConfig, profile, isGuest, onLogout }) {
-  const [activeHistoryId, setActiveHistoryId] = React.useState(null);
+function Sidebar({ subject, setSubject, difficulty, setDifficulty, teachingStyle, setTeachingStyle, mode, setMode, inSession, onLaunch, profile, isGuest, onLogout, history, activeConvId, onLoadConversation, onNewChat }) {
   return (
     <aside style={{
       width: 272, flexShrink: 0, borderRight: '1px solid var(--border)',
@@ -240,7 +303,7 @@ function Sidebar({ subject, setSubject, difficulty, setDifficulty, teachingStyle
     }}>
       {/* New chat button */}
       <div style={{ padding: '16px 14px 10px' }}>
-        <button onClick={() => { setActiveHistoryId(null); }} style={{
+        <button onClick={onNewChat} style={{
           width: '100%', display: 'flex', alignItems: 'center', gap: 10,
           padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
           background: 'var(--surface-2)', border: '1px solid var(--border)',
@@ -297,10 +360,14 @@ function Sidebar({ subject, setSubject, difficulty, setDifficulty, teachingStyle
         </button>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }} className="scroll-thin">
-        {FAKE_HISTORY.map(h => {
-          const isActive = activeHistoryId === h.id;
+        {history.length === 0 ? (
+          <div style={{ padding: '20px 10px', color: 'var(--text-faint)', fontSize: 12, textAlign: 'center', lineHeight: 1.5 }}>
+            No conversations yet
+          </div>
+        ) : history.map(h => {
+          const isActive = activeConvId === h.id;
           return (
-            <button key={h.id} onClick={() => setActiveHistoryId(h.id)} style={{
+            <button key={h.id} onClick={() => onLoadConversation(h)} style={{
               width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
               padding: '9px 10px', borderRadius: 8, border: 'none', cursor: 'pointer',
               background: isActive ? 'var(--accent-soft)' : 'transparent',
@@ -316,9 +383,9 @@ function Sidebar({ subject, setSubject, difficulty, setDifficulty, teachingStyle
                 width: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
               }}>{h.title}</div>
               <div style={{ display: 'flex', gap: 8, fontSize: 11, color: 'var(--text-muted)' }}>
-                <span>{h.subj}</span>
+                <span>{h.subjectLabel}</span>
                 <span style={{ color: 'var(--text-faint)' }}>·</span>
-                <span>{h.when}</span>
+                <span>{formatWhen(h.startedAt)}</span>
               </div>
             </button>
           );
@@ -357,13 +424,15 @@ function ModePill({ active, onClick, label, sub }) {
 /* ===========================================================
    DASHBOARD (empty state)
    =========================================================== */
-function Dashboard({ displayName, subject, setSubject, difficulty, teachingStyle, mode, setMode, onLaunch }) {
+function Dashboard({ displayName, subject, setSubject, difficulty, teachingStyle, mode, setMode, onLaunch, history, onLoadConversation }) {
   const [topic, setTopic] = React.useState('');
   const effectiveSubject = subject || GENERAL;
   const placeholder = mode === 'tutor'
     ? `What do you want to work on in ${effectiveSubject.label.toLowerCase()}?`
     : `Pick a topic to research deeply…`;
   const submit = () => onLaunch(mode, topic.trim());
+
+  const recentItems = history.slice(0, 3);
 
   return (
     <div className="bg-paper grain" style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
@@ -455,39 +524,48 @@ function Dashboard({ displayName, subject, setSubject, difficulty, teachingStyle
           </div>
         </div>
 
-        {/* Recent sessions placeholder */}
+        {/* Recent sessions */}
         <div style={{ marginTop: 56 }}>
           <div className="eyebrow" style={{ marginBottom: 16 }}>Recent</div>
-          <div className="surface" style={{ padding: 0, borderRadius: 14, overflow: 'hidden' }}>
-            {[
-              { subj: 'Biology', icon: 'B', q: 'Why does my body break down sugar?', when: '2h ago', turns: 9 },
-              { subj: 'History', icon: 'H', q: 'What caused the Bronze Age collapse?', when: 'Yesterday', turns: 14 },
-              { subj: 'Math',    icon: 'M', q: 'Integration by parts — I keep getting stuck.', when: '3d ago', turns: 6 },
-            ].map((r, i, arr) => (
-              <button key={i} style={{
-                width: '100%', display: 'flex', alignItems: 'center', gap: 14,
-                padding: '14px 18px', textAlign: 'left', cursor: 'pointer',
-                background: 'transparent', border: 'none',
-                borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none',
-                transition: 'background .12s',
-              }}
-                onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-2)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-              >
-                <span style={{
-                  width: 28, height: 28, borderRadius: 6,
-                  background: 'var(--surface-2)', color: 'var(--text-2)',
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  fontFamily: 'var(--font-display)', fontStyle: 'italic', fontSize: 15,
-                }}>{r.icon}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.q}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{r.subj} · {r.turns} turns</div>
-                </div>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--text-faint)' }}>{r.when}</span>
-              </button>
-            ))}
-          </div>
+          {recentItems.length === 0 ? (
+            <div style={{
+              padding: '28px 20px', borderRadius: 14, textAlign: 'center',
+              border: '1px dashed var(--border-2)', color: 'var(--text-faint)', fontSize: 14,
+            }}>
+              No sessions yet — start your first conversation above.
+            </div>
+          ) : (
+            <div className="surface" style={{ padding: 0, borderRadius: 14, overflow: 'hidden' }}>
+              {recentItems.map((h, i, arr) => {
+                const subj = SUBJECTS.find(s => s.id === h.subjectId) || GENERAL;
+                const turns = Math.floor((h.messages.length - 1) / 2);
+                return (
+                  <button key={h.id} onClick={() => onLoadConversation(h)} style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: 14,
+                    padding: '14px 18px', textAlign: 'left', cursor: 'pointer',
+                    background: 'transparent', border: 'none',
+                    borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none',
+                    transition: 'background .12s',
+                  }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-2)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <span style={{
+                      width: 28, height: 28, borderRadius: 6,
+                      background: 'var(--surface-2)', color: 'var(--text-2)',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      fontFamily: 'var(--font-display)', fontStyle: 'italic', fontSize: 15,
+                    }}>{subj.icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.title}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{h.subjectLabel} · {turns} {turns === 1 ? 'turn' : 'turns'}</div>
+                    </div>
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--text-faint)' }}>{formatWhen(h.startedAt)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -506,8 +584,13 @@ function getGreeting() {
 /* ===========================================================
    SESSION (chat) VIEW
    =========================================================== */
-function SessionView({ config, onExit }) {
-  const [messages, setMessages] = React.useState(() => seedMessages(config));
+function SessionView({ config, onExit, onConversationUpdate }) {
+  const convId = React.useRef(config.convId);
+  const startedAt = React.useRef(config.restoredConv?.startedAt || new Date().toISOString());
+
+  const [messages, setMessages] = React.useState(() =>
+    config.restoredConv ? config.restoredConv.messages : seedMessages(config)
+  );
   const [input, setInput] = React.useState('');
   const [thinking, setThinking] = React.useState(false);
   const [error, setError] = React.useState(null);
@@ -517,6 +600,22 @@ function SessionView({ config, onExit }) {
   React.useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, thinking]);
+
+  const persistConversation = (msgs) => {
+    const firstStudent = msgs.find(m => m.role === 'student');
+    if (!firstStudent) return;
+    onConversationUpdate({
+      id: convId.current,
+      subjectId: config.subject.id,
+      subjectLabel: config.subject.label,
+      mode: config.mode,
+      difficulty: config.difficulty,
+      teachingStyle: config.teachingStyle,
+      title: deriveTitle(firstStudent.content),
+      messages: msgs,
+      startedAt: startedAt.current,
+    });
+  };
 
   const send = (overrideText) => {
     const text = (overrideText !== undefined ? overrideText : input).trim();
@@ -529,12 +628,15 @@ function SessionView({ config, onExit }) {
     setError(null);
     callChatApi(newMessages, config)
       .then(data => {
-        setMessages(m => [...m, {
+        const tutorMsg = {
           role: 'tutor',
           content: data.text,
           citations: data.citations || [],
           id: Date.now() + 1,
-        }]);
+        };
+        const finalMessages = [...newMessages, tutorMsg];
+        setMessages(finalMessages);
+        persistConversation(finalMessages);
       })
       .catch(err => {
         setError(err.message || 'Something went wrong. Please try again.');

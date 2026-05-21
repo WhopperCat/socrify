@@ -112,10 +112,24 @@ function buildApiMessages(messages) {
   // Skip any leading tutor seed and map roles.
   const firstStudentIdx = messages.findIndex(m => m.role === 'student');
   if (firstStudentIdx === -1) return [];
-  return messages.slice(firstStudentIdx).map(m => ({
-    role: m.role === 'student' ? 'user' : 'assistant',
-    content: m.content,
-  }));
+  return messages.slice(firstStudentIdx).map(m => {
+    const role = m.role === 'student' ? 'user' : 'assistant';
+    if (!m.attachments?.length) return { role, content: m.content };
+    // Build multi-part content array for messages with file attachments
+    const blocks = [];
+    for (const att of m.attachments) {
+      if (att.type?.startsWith('image/')) {
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: att.type, data: att.data } });
+      } else if (att.type === 'application/pdf') {
+        blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: att.data } });
+      } else {
+        // Plain text / HTML — inline as text
+        blocks.push({ type: 'text', text: `[Attached file: ${att.name}]\n${att.textContent || ''}` });
+      }
+    }
+    if (m.content) blocks.push({ type: 'text', text: m.content });
+    return { role, content: blocks };
+  });
 }
 
 async function callChatApi(messages, config) {
@@ -141,6 +155,127 @@ async function callChatApi(messages, config) {
 }
 
 /* ===========================================================
+   FILE ATTACHMENT helpers
+   =========================================================== */
+const MAX_ATTACH_BYTES = 10 * 1024 * 1024; // 10 MB per file
+
+async function processFiles(fileList) {
+  const results = [];
+  for (const file of fileList) {
+    if (file.size > MAX_ATTACH_BYTES) {
+      alert(`"${file.name}" exceeds the 10 MB limit — please try a smaller file.`);
+      continue;
+    }
+    const att = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      if (file.type.startsWith('image/') || file.type === 'application/pdf') {
+        reader.onload = e => {
+          const dataUrl = e.target.result;
+          resolve({
+            name: file.name,
+            type: file.type,
+            data: dataUrl.split(',')[1],
+            preview: file.type.startsWith('image/') ? dataUrl : null,
+          });
+        };
+        reader.readAsDataURL(file);
+      } else {
+        reader.onload = e => resolve({ name: file.name, type: file.type, textContent: e.target.result });
+        reader.readAsText(file);
+      }
+      reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+    });
+    results.push(att);
+  }
+  return results;
+}
+
+/* ===========================================================
+   EXPORT helpers
+   =========================================================== */
+function downloadFile(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportAsTxt(messages, config) {
+  const date = new Date().toLocaleDateString();
+  const lines = [`SOCRIFY — ${config.subject.label.toUpperCase()}`, `Exported ${date}`, '='.repeat(52), ''];
+  for (const m of messages) {
+    if (m.role === 'student') {
+      const labels = m.attachmentLabels?.length ? ` [+ ${m.attachmentLabels.join(', ')}]` : '';
+      lines.push(`YOU:${labels}`, m.content || '', '');
+    } else {
+      lines.push('SOCRIFY:', m.content || '');
+      if (m.citations?.length) {
+        lines.push('', 'Sources:');
+        m.citations.forEach((c, i) => lines.push(`  ${i + 1}. ${c.title || c.url} — ${c.url}`));
+      }
+      lines.push('');
+    }
+  }
+  downloadFile(`socrify-${config.subject.id}-${Date.now()}.txt`, lines.join('\n'), 'text/plain');
+}
+
+function exportAsHtml(messages, config) {
+  const date = new Date().toLocaleDateString();
+  const msgHtml = messages.map(m => {
+    if (m.role === 'student') {
+      const text = (m.content || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+      const chips = (m.attachmentLabels || []).map(l => `<span class="chip">📎 ${l}</span>`).join(' ');
+      return `<div class="student">${chips ? `<div class="chips">${chips}</div>` : ''}<div class="bubble">${text}</div></div>`;
+    }
+    const raw = window.marked ? window.marked.parse(m.content || '') : (m.content || '');
+    const safe = window.DOMPurify ? window.DOMPurify.sanitize(raw) : raw;
+    const cits = m.citations?.length
+      ? `<div class="sources"><strong>Sources:</strong><ol>${m.citations.map(c => `<li><a href="${c.url}" target="_blank">${c.title || c.url}</a></li>`).join('')}</ol></div>`
+      : '';
+    return `<div class="tutor"><div class="label">Socrify</div><div class="content">${safe}${cits}</div></div>`;
+  }).join('\n');
+
+  const html = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>${config.subject.label} — Socrify</title>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:800px;margin:40px auto;padding:0 24px;line-height:1.6;color:#1a1a2e;background:#fafaf8}
+  h1{font-size:22px;font-weight:600;margin:0 0 4px}
+  .meta{color:#666;font-size:13px;margin-bottom:32px}
+  .student{display:flex;flex-direction:column;align-items:flex-end;margin:16px 0}
+  .student .chips{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;margin-bottom:6px}
+  .student .chip{font-size:12px;padding:3px 8px;background:#e8eeff;color:#3355cc;border-radius:6px}
+  .student .bubble{background:#f0f0f0;padding:10px 16px;border-radius:14px;max-width:75%;font-size:15px}
+  .tutor{margin:20px 0}
+  .tutor .label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:#4d6dff;margin-bottom:6px}
+  .content{font-size:15px}
+  .content h1,.content h2,.content h3{margin:.8em 0 .3em;font-weight:600}
+  .content pre{background:#f5f5f5;padding:14px;border-radius:8px;overflow-x:auto;font-size:13px;font-family:monospace}
+  .content code{background:#f0f0f0;padding:2px 5px;border-radius:4px;font-size:13px;font-family:monospace}
+  .content pre code{background:none;padding:0}
+  .content blockquote{border-left:3px solid #4d6dff;padding-left:12px;color:#555;margin-left:0}
+  .content a{color:#4d6dff}
+  .content table{border-collapse:collapse;width:100%}
+  .content th,.content td{border:1px solid #ddd;padding:7px 10px;text-align:left}
+  .content th{background:#f5f5f5;font-weight:600}
+  .sources{font-size:12px;margin-top:10px;padding-top:8px;border-top:1px solid #e5e5e5;color:#555}
+  .sources ol{margin:4px 0;padding-left:18px}
+  .sources a{color:#4d6dff}
+  footer{margin-top:48px;padding-top:14px;border-top:1px solid #e5e5e5;font-size:12px;color:#999}
+</style></head>
+<body>
+<h1>${config.subject.label}</h1>
+<p class="meta">Socrify session · Exported ${date}</p>
+${msgHtml}
+<footer>Exported from Socrify</footer>
+</body></html>`;
+  downloadFile(`socrify-${config.subject.id}-${Date.now()}.html`, html, 'text/html');
+}
+
+/* ===========================================================
    APP SHELL — frames dashboard + session
    =========================================================== */
 function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, variant, fontSize, setFontSize, reduceMotion, setReduceMotion }) {
@@ -162,10 +297,10 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
     });
   }, []);
 
-  const launch = (m, initialTopic = '') => {
+  const launch = (m, initialTopic = '', initialAttachments = []) => {
     const sub = subject || GENERAL;
     setSessionConfig({
-      subject: sub, mode: m, difficulty, teachingStyle, initialTopic,
+      subject: sub, mode: m, difficulty, teachingStyle, initialTopic, initialAttachments,
       convId: 'conv_' + Date.now() + '_' + Math.random().toString(36).slice(2),
     });
   };
@@ -426,11 +561,18 @@ function ModePill({ active, onClick, label, sub }) {
    =========================================================== */
 function Dashboard({ displayName, subject, setSubject, difficulty, teachingStyle, mode, setMode, onLaunch, history, onLoadConversation }) {
   const [topic, setTopic] = React.useState('');
+  const [attachments, setAttachments] = React.useState([]);
   const effectiveSubject = subject || GENERAL;
   const placeholder = mode === 'tutor'
     ? `What do you want to work on in ${effectiveSubject.label.toLowerCase()}?`
     : `Pick a topic to research deeply…`;
-  const submit = () => onLaunch(mode, topic.trim());
+  const submit = () => onLaunch(mode, topic.trim(), attachments);
+  const handleFileSelect = async (files) => {
+    try {
+      const processed = await processFiles(files);
+      setAttachments(prev => [...prev, ...processed]);
+    } catch (e) { alert('File error: ' + e.message); }
+  };
 
   const recentItems = history.slice(0, 3);
 
@@ -478,10 +620,14 @@ function Dashboard({ displayName, subject, setSubject, difficulty, teachingStyle
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit(); }}
           />
 
+          <AttachmentPreview
+            attachments={attachments}
+            onRemove={i => setAttachments(prev => prev.filter((_, j) => j !== i))}
+          />
+
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px 12px' }}>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <span className="chip" style={{ fontSize: 12, padding: '4px 10px' }}>📎 Attach</span>
-              <span className="chip" style={{ fontSize: 12, padding: '4px 10px' }}>I'm stuck</span>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              <AttachButton onFilesSelected={handleFileSelect} style={{ fontSize: 12, padding: '4px 10px' }} />
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>⌘ + ↵</span>
@@ -592,10 +738,18 @@ function SessionView({ config, onExit, onConversationUpdate }) {
     config.restoredConv ? config.restoredConv.messages : seedMessages(config)
   );
   const [input, setInput] = React.useState('');
+  const [attachments, setAttachments] = React.useState([]);
   const [thinking, setThinking] = React.useState(false);
   const [error, setError] = React.useState(null);
   const scrollRef = React.useRef(null);
   const didAutoSend = React.useRef(false);
+
+  const handleFileSelect = async (files) => {
+    try {
+      const processed = await processFiles(files);
+      setAttachments(prev => [...prev, ...processed]);
+    } catch (e) { setError('Could not read file: ' + e.message); }
+  };
 
   React.useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -604,6 +758,13 @@ function SessionView({ config, onExit, onConversationUpdate }) {
   const persistConversation = (msgs) => {
     const firstStudent = msgs.find(m => m.role === 'student');
     if (!firstStudent) return;
+    // Strip binary attachment data before writing to localStorage — keep only labels
+    const storableMsgs = msgs.map(m => ({
+      ...m,
+      attachments: undefined,
+      attachmentLabels: m.attachmentLabels || m.attachments?.map(a => a.name),
+    }));
+    const titleSource = firstStudent.content || firstStudent.attachments?.[0]?.name || 'Attachment';
     onConversationUpdate({
       id: convId.current,
       subjectId: config.subject.id,
@@ -611,19 +772,27 @@ function SessionView({ config, onExit, onConversationUpdate }) {
       mode: config.mode,
       difficulty: config.difficulty,
       teachingStyle: config.teachingStyle,
-      title: deriveTitle(firstStudent.content),
-      messages: msgs,
+      title: deriveTitle(titleSource),
+      messages: storableMsgs,
       startedAt: startedAt.current,
     });
   };
 
-  const send = (overrideText) => {
+  const send = (overrideText, overrideAttachments) => {
     const text = (overrideText !== undefined ? overrideText : input).trim();
-    if (!text || thinking) return;
-    const userMsg = { role: 'student', content: text, id: Date.now() };
+    const currentAtts = overrideAttachments !== undefined ? overrideAttachments : attachments;
+    if ((!text && !currentAtts.length) || thinking) return;
+    const userMsg = {
+      role: 'student',
+      content: text,
+      attachments: currentAtts.length ? currentAtts : undefined,
+      attachmentLabels: currentAtts.length ? currentAtts.map(a => a.name) : undefined,
+      id: Date.now(),
+    };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setInput('');
+    setAttachments([]);
     setThinking(true);
     setError(null);
     callChatApi(newMessages, config)
@@ -646,11 +815,11 @@ function SessionView({ config, onExit, onConversationUpdate }) {
       });
   };
 
-  // Auto-send the topic that was typed on the dashboard
+  // Auto-send the topic (and any attachments) typed on the dashboard
   React.useEffect(() => {
-    if (config.initialTopic && !didAutoSend.current) {
+    if ((config.initialTopic || config.initialAttachments?.length) && !didAutoSend.current) {
       didAutoSend.current = true;
-      send(config.initialTopic);
+      send(config.initialTopic || '', config.initialAttachments || []);
     }
   }, []);
 
@@ -676,6 +845,7 @@ function SessionView({ config, onExit, onConversationUpdate }) {
             {config.mode === 'tutor' ? <>Tutor · <span style={{ textTransform: 'capitalize' }}>{config.teachingStyle}</span> · {config.difficulty}</> : <>Research mode · Deep search</>}
           </div>
         </div>
+        <ExportMenu messages={messages} config={config} />
         <button onClick={onExit} className="btn btn-bare btn-sm">End session</button>
       </div>
 
@@ -718,6 +888,10 @@ function SessionView({ config, onExit, onConversationUpdate }) {
           )}
 
           <div className="card" style={{ padding: 4, borderRadius: 14, boxShadow: 'var(--shadow)' }}>
+            <AttachmentPreview
+              attachments={attachments}
+              onRemove={i => setAttachments(prev => prev.filter((_, j) => j !== i))}
+            />
             <textarea
               value={input}
               onChange={e => setInput(e.target.value)}
@@ -727,10 +901,11 @@ function SessionView({ config, onExit, onConversationUpdate }) {
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
             />
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px 8px' }}>
-              <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
-                ↵ to send · ⇧↵ for newline
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <AttachButton onFilesSelected={handleFileSelect} disabled={thinking} />
+                <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>↵ send · ⇧↵ newline</span>
               </div>
-              <button onClick={() => send()} className="btn btn-accent btn-sm" disabled={!input.trim() || thinking}>
+              <button onClick={() => send()} className="btn btn-accent btn-sm" disabled={(!input.trim() && !attachments.length) || thinking}>
                 Send <span aria-hidden>↵</span>
               </button>
             </div>
@@ -751,14 +926,28 @@ function QuickAction({ children, onClick }) {
 
 function Message({ msg, isFirst }) {
   if (msg.role === 'student') {
+    const labels = msg.attachmentLabels || [];
     return (
       <div style={{ display: 'flex', justifyContent: 'flex-end' }} className="fade-in-up">
-        <div style={{
-          background: 'var(--surface)', border: '1px solid var(--border)',
-          padding: '12px 16px', borderRadius: 14, maxWidth: '78%',
-          fontSize: 15, lineHeight: 1.5,
-        }}>
-          {msg.content}
+        <div style={{ maxWidth: '78%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+          {labels.length > 0 && (
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {labels.map((lbl, i) => (
+                <span key={i} style={{
+                  fontSize: 12, padding: '3px 9px', borderRadius: 6,
+                  background: 'var(--accent-soft)', color: 'var(--accent-ink)',
+                }}>📎 {lbl}</span>
+              ))}
+            </div>
+          )}
+          {msg.content && (
+            <div style={{
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              padding: '12px 16px', borderRadius: 14, fontSize: 15, lineHeight: 1.5,
+            }}>
+              {msg.content}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -774,14 +963,7 @@ function Message({ msg, isFirst }) {
         {isFirst && (
           <div className="eyebrow" style={{ marginBottom: 8 }}>Socrify · opening question</div>
         )}
-        <p style={{
-          margin: 0,
-          fontFamily: 'var(--font-sans)',
-          fontSize: 16, lineHeight: 1.55, color: 'var(--text)',
-          fontWeight: 400, whiteSpace: 'pre-wrap',
-        }}>
-          {msg.content}
-        </p>
+        <MarkdownContent content={msg.content} />
         {hasCitations && (
           <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
             <div className="eyebrow" style={{ marginBottom: 8 }}>Sources</div>
@@ -815,6 +997,179 @@ function ThinkingIndicator({ mode }) {
         {mode === 'research' ? 'Searching sources' : 'Thinking'}
         <span><span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" /></span>
       </div>
+    </div>
+  );
+}
+
+/* ===========================================================
+   MARKDOWN CONTENT — renders AI responses as formatted text
+   =========================================================== */
+function MarkdownContent({ content }) {
+  const ref = React.useRef(null);
+
+  const html = React.useMemo(() => {
+    if (!window.marked) return null;
+    // One-time setup: open links in new tabs, enable GFM + breaks
+    if (!window._markedReady) {
+      window._markedReady = true;
+      try {
+        window.marked.use({
+          gfm: true,
+          breaks: true,
+          renderer: {
+            link({ href, title, text }) {
+              const t = title ? ` title="${title}"` : '';
+              return `<a href="${href}"${t} target="_blank" rel="noopener noreferrer">${text}</a>`;
+            },
+          },
+        });
+      } catch (e) { /* marked version mismatch — fall through */ }
+    }
+    try {
+      const raw = window.marked.parse(content || '');
+      return window.DOMPurify
+        ? window.DOMPurify.sanitize(raw, { ADD_ATTR: ['target', 'rel'] })
+        : raw;
+    } catch (e) { return null; }
+  }, [content]);
+
+  // Apply syntax highlighting after every render (only hits un-highlighted blocks)
+  React.useEffect(() => {
+    if (ref.current && window.hljs) {
+      ref.current.querySelectorAll('pre code:not(.hljs)').forEach(block => {
+        window.hljs.highlightElement(block);
+      });
+    }
+  });
+
+  if (!html) {
+    // Fallback: plain pre-wrap text (same as before)
+    return (
+      <p style={{ margin: 0, fontFamily: 'var(--font-sans)', fontSize: 16, lineHeight: 1.55, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>
+        {content}
+      </p>
+    );
+  }
+  return <div ref={ref} className="prose" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/* ===========================================================
+   ATTACH BUTTON — triggers a hidden file <input>
+   =========================================================== */
+function AttachButton({ onFilesSelected, disabled, style }) {
+  const ref = React.useRef(null);
+  return (
+    <>
+      <input
+        ref={ref}
+        type="file"
+        multiple
+        accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain,text/html,text/htm"
+        style={{ display: 'none' }}
+        onChange={e => {
+          if (e.target.files?.length) {
+            onFilesSelected([...e.target.files]);
+            e.target.value = '';
+          }
+        }}
+      />
+      <button
+        type="button"
+        className="chip"
+        onClick={() => ref.current?.click()}
+        disabled={disabled}
+        style={{ fontSize: 12, padding: '4px 10px', cursor: 'pointer', ...style }}
+      >
+        📎 Attach
+      </button>
+    </>
+  );
+}
+
+/* ===========================================================
+   ATTACHMENT PREVIEW — shows pending files above the textarea
+   =========================================================== */
+function AttachmentPreview({ attachments, onRemove }) {
+  if (!attachments.length) return null;
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '10px 12px 4px' }}>
+      {attachments.map((att, i) => (
+        <div key={i} style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '4px 8px', borderRadius: 8,
+          background: 'var(--surface-2)', border: '1px solid var(--border)', fontSize: 12.5,
+        }}>
+          {att.preview
+            ? <img src={att.preview} alt="" style={{ width: 28, height: 28, objectFit: 'cover', borderRadius: 4 }} />
+            : <span style={{ fontSize: 16 }}>{att.type === 'application/pdf' ? '📄' : '📝'}</span>
+          }
+          <span style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-2)' }}>
+            {att.name}
+          </span>
+          <button
+            onClick={() => onRemove(i)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 15, padding: '0 2px', lineHeight: 1 }}
+          >×</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ===========================================================
+   EXPORT MENU — dropdown to save conversation as .txt or .html
+   =========================================================== */
+function ExportMenu({ messages, config }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  const hasContent = messages.some(m => m.role === 'student');
+
+  React.useEffect(() => {
+    if (!open) return;
+    const close = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+
+  const items = [
+    { label: 'Download .txt', action: () => { exportAsTxt(messages, config); setOpen(false); } },
+    { label: 'Download .html', action: () => { exportAsHtml(messages, config); setOpen(false); } },
+  ];
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        className="btn btn-bare btn-sm"
+        onClick={() => setOpen(o => !o)}
+        disabled={!hasContent}
+        title="Export conversation"
+      >
+        Export ↓
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 200,
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 10, boxShadow: 'var(--shadow)', minWidth: 160, overflow: 'hidden',
+        }}>
+          {items.map(item => (
+            <button
+              key={item.label}
+              onClick={item.action}
+              style={{
+                width: '100%', padding: '9px 14px', background: 'none', border: 'none',
+                cursor: 'pointer', textAlign: 'left', fontSize: 13.5,
+                color: 'var(--text)', fontFamily: 'var(--font-sans)',
+                transition: 'background .1s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-2)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'none'}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

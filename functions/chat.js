@@ -150,7 +150,7 @@ export async function onRequest(context) {
   if (!Array.isArray(messages) || messages.length === 0) {
     return json({ error: 'messages[] required' }, 400);
   }
-  if (typeof system !== 'string' || system.length < 20) {
+  if ((typeof system !== 'string' || system.length < 20) && !Array.isArray(system)) {
     return json({ error: 'system prompt required' }, 400);
   }
   if (messages.length > 60) {
@@ -189,11 +189,32 @@ export async function onRequest(context) {
   }
 
   const isResearch = mode === 'research';
+
+  // Wrap system prompt as array with cache breakpoint so the (typically large)
+  // system prompt is cached across turns for the same user session.
+  const systemBlock = Array.isArray(system)
+    ? system
+    : [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }];
+
+  // Add a cache breakpoint on the last content block of the last message so
+  // the growing conversation prefix is cached on each multi-turn request.
+  const cachedMessages = messages.map((msg, idx) => {
+    if (idx !== messages.length - 1) return msg;
+    const content = Array.isArray(msg.content)
+      ? msg.content.map((block, bi, arr) =>
+          bi === arr.length - 1
+            ? { ...block, cache_control: { type: 'ephemeral' } }
+            : block
+        )
+      : [{ type: 'text', text: msg.content, cache_control: { type: 'ephemeral' } }];
+    return { ...msg, content };
+  });
+
   const requestBody = {
     model: isResearch ? RESEARCH_MODEL : TUTOR_MODEL,
     max_tokens: isResearch ? RESEARCH_MAX_TOKENS : TUTOR_MAX_TOKENS,
-    system,
-    messages,
+    system: systemBlock,
+    messages: cachedMessages,
   };
   if (isResearch) {
     requestBody.thinking = { type: 'enabled', budget_tokens: RESEARCH_THINKING_BUDGET };
@@ -211,6 +232,7 @@ export async function onRequest(context) {
         'Content-Type': 'application/json',
         'x-api-key': ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'prompt-caching-2024-07-31',
       },
       body: JSON.stringify(requestBody),
     });

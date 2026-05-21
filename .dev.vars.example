@@ -1,0 +1,13 @@
+# Copy this file to .dev.vars for local development with `wrangler dev`.
+# .dev.vars is gitignored — never commit real secrets.
+#
+# For production, set each of these as Worker secrets (they persist across deploys):
+#   wrangler secret put ANTHROPIC_API_KEY
+#   wrangler secret put SUPABASE_URL
+#   wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+#   wrangler secret put IP_HASH_SALT
+
+ANTHROPIC_API_KEY=
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+IP_HASH_SALT=

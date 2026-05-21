@@ -22,7 +22,7 @@ const RESEARCH_DAILY_LIMIT = 1;
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
@@ -248,4 +248,90 @@ export async function onRequest(context) {
     console.error('Proxy error:', err);
     return json({ error: 'proxy_failure', detail: String(err.message || err) }, 500);
   }
+}
+
+/* ===========================================================
+   GET /history — fetch saved conversations for an auth'd user
+   =========================================================== */
+export async function getHistory({ request, env }) {
+  const supa = makeSupa(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+  const user = await verifyUser(supa, request.headers.get('Authorization'));
+  if (!user) return json({ error: 'Unauthorized' }, 401);
+
+  const { data: conversations, error } = await supa
+    .from('conversations')
+    .select(`
+      id, subject_id, mode, title, created_at,
+      messages ( id, role, content, citations, created_at )
+    `)
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  if (error) return json({ error: error.message }, 500);
+
+  // Shape matches the localStorage format so the frontend can use either source
+  const shaped = conversations.map(c => ({
+    id: c.id,
+    subjectId: c.subject_id,
+    subjectLabel: c.subject_label || c.subject_id,
+    mode: c.mode,
+    title: c.title,
+    startedAt: c.created_at,
+    messages: (c.messages || [])
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      .map(m => ({
+        id: m.id,
+        role: m.role === 'user' ? 'student' : 'tutor',
+        content: m.content,
+        citations: m.citations || [],
+      })),
+  }));
+
+  return json({ conversations: shaped });
+}
+
+/* ===========================================================
+   POST /history — upsert a conversation + its messages
+   =========================================================== */
+export async function upsertConversation({ request, env }) {
+  const supa = makeSupa(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+  const user = await verifyUser(supa, request.headers.get('Authorization'));
+  if (!user) return json({ error: 'Unauthorized' }, 401);
+
+  let body;
+  try { body = await request.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
+
+  const { id, subjectId, subjectLabel, mode, title, messages, startedAt } = body;
+  if (!id || !subjectId || !mode || !title) return json({ error: 'Missing required fields' }, 400);
+
+  const { error: convErr } = await supa
+    .from('conversations')
+    .upsert({
+      id,
+      user_id: user.id,
+      subject_id: subjectId,
+      subject_label: subjectLabel || subjectId,
+      mode,
+      title,
+      created_at: startedAt || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
+
+  if (convErr) return json({ error: convErr.message }, 500);
+
+  if (Array.isArray(messages) && messages.length > 0) {
+    await supa.from('messages').delete().eq('conversation_id', id);
+    const rows = messages.map((m, idx) => ({
+      conversation_id: id,
+      role: m.role === 'student' ? 'user' : 'assistant',
+      content: m.content,
+      citations: m.citations?.length ? m.citations : null,
+      sort_order: idx,
+    }));
+    const { error: msgErr } = await supa.from('messages').insert(rows);
+    if (msgErr) return json({ error: msgErr.message }, 500);
+  }
+
+  return json({ ok: true });
 }

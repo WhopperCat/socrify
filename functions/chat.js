@@ -1,9 +1,10 @@
-// Socrify — Anthropic API proxy (Cloudflare Pages Function)
-// Env vars expected (set in Cloudflare Pages dashboard):
+// Socrify — Anthropic API proxy (Cloudflare Worker)
+// Secrets expected (set once via `wrangler secret put <NAME>` — persist across deploys):
 //   ANTHROPIC_API_KEY
 //   SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
 //   IP_HASH_SALT  (optional)
+// See .dev.vars.example for local development setup.
 
 import { createClient } from '@supabase/supabase-js';
 

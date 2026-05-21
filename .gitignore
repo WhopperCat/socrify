@@ -1,6 +1,9 @@
 # Netlify CLI local state (site link, dev server PID, etc.)
 .netlify/
 
+# Cloudflare Workers local dev secrets (never commit real secrets)
+.dev.vars
+
 # Node
 node_modules/
 npm-debug.log*

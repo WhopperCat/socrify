@@ -2,36 +2,95 @@
    Socrify · Popovers — Settings + Account
    ========================================================= */
 
-/* ── anchored popover shell ── */
-function Popover({ open, onClose, anchor = 'right', width = 320, children }) {
+/* ── popover shell — portal + position:fixed, auto-flips above/below trigger ── */
+function Popover({ open, onClose, anchor = 'auto', width = 320, triggerRef, children }) {
   const ref = React.useRef(null);
+  const [pos, setPos] = React.useState(null);
+
+  React.useLayoutEffect(() => {
+    if (!open) { setPos(null); return; }
+    const compute = () => {
+      const trigger = triggerRef?.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const gap = 8, margin = 12;
+      const spaceBelow = vh - rect.bottom;
+      const spaceAbove = rect.top;
+
+      // Decide vertical direction.
+      // 'up'   => prefer opening above the trigger (e.g. sidebar footer)
+      // 'down' => prefer opening below (e.g. top-bar buttons)
+      // 'auto' => use whichever side has more room
+      let openUp;
+      if (anchor === 'up' || anchor === 'bottomRight') openUp = spaceAbove > 200 || spaceAbove > spaceBelow;
+      else if (anchor === 'down' || anchor === 'right' || anchor === 'rightTop') openUp = false;
+      else openUp = spaceAbove > spaceBelow;
+
+      // Horizontal: align to trigger edge that keeps the popover on-screen.
+      // If trigger sits on the left half of the screen, left-align; otherwise right-align.
+      const triggerCenter = (rect.left + rect.right) / 2;
+      let left;
+      if (triggerCenter < vw / 2) {
+        left = Math.max(margin, Math.min(vw - width - margin, rect.left));
+      } else {
+        left = Math.max(margin, Math.min(vw - width - margin, rect.right - width));
+      }
+
+      if (openUp) {
+        setPos({
+          left,
+          bottom: Math.max(margin, vh - rect.top + gap),
+          maxHeight: Math.max(200, spaceAbove - gap - margin),
+        });
+      } else {
+        setPos({
+          left,
+          top: Math.max(margin, rect.bottom + gap),
+          maxHeight: Math.max(200, spaceBelow - gap - margin),
+        });
+      }
+    };
+    compute();
+    window.addEventListener('resize', compute);
+    window.addEventListener('scroll', compute, true);
+    return () => {
+      window.removeEventListener('resize', compute);
+      window.removeEventListener('scroll', compute, true);
+    };
+  }, [open, anchor, width, triggerRef]);
+
   React.useEffect(() => {
     if (!open) return;
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    const onDown = (e) => {
+      const insidePopover = ref.current && ref.current.contains(e.target);
+      const insideTrigger = triggerRef?.current && triggerRef.current.contains(e.target);
+      if (!insidePopover && !insideTrigger) onClose();
+    };
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    setTimeout(() => window.addEventListener('mousedown', onDown), 0);
+    const t = setTimeout(() => window.addEventListener('mousedown', onDown), 0);
     window.addEventListener('keydown', onKey);
-    return () => { window.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey); };
-  }, [open, onClose]);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open, onClose, triggerRef]);
 
-  if (!open) return null;
-  const positionStyle = {
-    bottomRight:  { bottom: 'calc(100% + 8px)', left: 0 },
-    right:        { top: 'calc(100% + 8px)', right: 0 },
-    rightTop:     { top: 'calc(100% + 8px)', right: 0 },
-  }[anchor] || { top: 'calc(100% + 8px)', right: 0 };
+  if (!open || !pos) return null;
 
-  return (
+  return ReactDOM.createPortal(
     <div ref={ref} style={{
-      position: 'absolute', zIndex: 50, width,
-      ...positionStyle,
+      position: 'fixed', zIndex: 1000, width,
+      ...pos,
       background: 'var(--surface)', border: '1px solid var(--border)',
       borderRadius: 16, boxShadow: 'var(--shadow-lg)',
-      overflow: 'hidden', color: 'var(--text)',
+      overflowY: 'auto', color: 'var(--text)',
       animation: 'fadeInUp .18s cubic-bezier(.2,.7,.2,1)',
-    }}>
+    }} className="scroll-thin">
       {children}
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -132,10 +191,10 @@ function Switch({ on }) {
 }
 
 /* ── Settings popover ── */
-function SettingsPopover({ open, onClose, settingsProps, fontSize, setFontSize, reduceMotion, setReduceMotion }) {
+function SettingsPopover({ open, onClose, settingsProps, fontSize, setFontSize, reduceMotion, setReduceMotion, triggerRef }) {
   const { theme, setTheme, dyslexic, setDyslexic } = settingsProps;
   return (
-    <Popover open={open} onClose={onClose} width={300}>
+    <Popover open={open} onClose={onClose} width={300} anchor="down" triggerRef={triggerRef}>
       <PopoverHeader title="Settings" subtitle="Display & accessibility" />
 
       <PopoverSection label="Appearance">
@@ -317,11 +376,11 @@ function ThemeChip({ kind }) {
 }
 
 /* ── Account popover ── */
-function AccountPopover({ open, onClose, profile, isGuest, onLogout, onUpgrade }) {
+function AccountPopover({ open, onClose, profile, isGuest, onLogout, onUpgrade, triggerRef, anchor = 'auto' }) {
   const name = isGuest ? 'Guest session' : (profile?.first_name || 'Alex');
   const handle = isGuest ? '@guest' : (profile?.first_name ? `@${profile.first_name.toLowerCase()}` : '@alex');
   return (
-    <Popover open={open} onClose={onClose} anchor="bottomRight" width={320}>
+    <Popover open={open} onClose={onClose} anchor={anchor} width={320} triggerRef={triggerRef}>
       {/* Profile header */}
       <div style={{
         padding: 18,
@@ -476,9 +535,11 @@ Object.assign(window, {
 /* ── Trigger button wrappers ── */
 function SettingsButton({ settingsProps, fontSize, setFontSize, reduceMotion, setReduceMotion }) {
   const [open, setOpen] = React.useState(false);
+  const triggerRef = React.useRef(null);
   return (
-    <div style={{ position: 'relative' }}>
+    <>
       <button
+        ref={triggerRef}
         onClick={() => setOpen(o => !o)}
         className={`btn btn-bare btn-icon`}
         title="Settings"
@@ -497,34 +558,36 @@ function SettingsButton({ settingsProps, fontSize, setFontSize, reduceMotion, se
         setFontSize={setFontSize}
         reduceMotion={reduceMotion}
         setReduceMotion={setReduceMotion}
+        triggerRef={triggerRef}
       />
-    </div>
+    </>
   );
 }
 
 function AccountButton({ profile, isGuest, onLogout, onUpgrade, compact }) {
   const [open, setOpen] = React.useState(false);
+  const triggerRef = React.useRef(null);
   const name = isGuest ? 'Guest' : (profile?.first_name || 'Alex');
   const initial = name.charAt(0).toUpperCase();
 
   if (compact) {
     return (
-      <div style={{ position: 'relative' }}>
-        <button onClick={() => setOpen(o => !o)} style={{
+      <>
+        <button ref={triggerRef} onClick={() => setOpen(o => !o)} style={{
           width: 32, height: 32, borderRadius: 999,
           background: 'var(--accent)', color: 'white',
           border: '1px solid var(--accent)',
           fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600,
           cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         }}>{initial}</button>
-        <AccountPopover open={open} onClose={() => setOpen(false)} profile={profile} isGuest={isGuest} onLogout={onLogout} onUpgrade={onUpgrade} />
-      </div>
+        <AccountPopover open={open} onClose={() => setOpen(false)} profile={profile} isGuest={isGuest} onLogout={onLogout} onUpgrade={onUpgrade} triggerRef={triggerRef} anchor="down" />
+      </>
     );
   }
   // sidebar-footer expanded form
   return (
-    <div style={{ position: 'relative' }}>
-      <button onClick={() => setOpen(o => !o)} style={{
+    <>
+      <button ref={triggerRef} onClick={() => setOpen(o => !o)} style={{
         width: '100%', display: 'flex', alignItems: 'center', gap: 10,
         padding: '8px 10px', borderRadius: 10, border: '1px solid transparent',
         background: open ? 'var(--surface-2)' : 'transparent',
@@ -548,7 +611,7 @@ function AccountButton({ profile, isGuest, onLogout, onUpgrade, compact }) {
         </span>
         <span style={{ color: 'var(--text-muted)', fontSize: 14 }}>⋯</span>
       </button>
-      <AccountPopover open={open} onClose={() => setOpen(false)} profile={profile} isGuest={isGuest} onLogout={onLogout} onUpgrade={onUpgrade} />
-    </div>
+      <AccountPopover open={open} onClose={() => setOpen(false)} profile={profile} isGuest={isGuest} onLogout={onLogout} onUpgrade={onUpgrade} triggerRef={triggerRef} anchor="up" />
+    </>
   );
 }

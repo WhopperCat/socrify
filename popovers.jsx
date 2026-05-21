@@ -376,7 +376,24 @@ function ThemeChip({ kind }) {
 }
 
 /* ── Account popover ── */
-function AccountPopover({ open, onClose, profile, isGuest, onLogout, onUpgrade, onOpenScreen, notificationsOn, setNotificationsOn, triggerRef, anchor = 'auto' }) {
+function AccountPopover({ open, onClose, profile, isGuest, tier, accessToken, onLogout, onUpgrade, onOpenScreen, notificationsOn, setNotificationsOn, triggerRef, anchor = 'auto' }) {
+  const [usage, setUsage] = React.useState(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      const data = await window.apiGetUsage({ accessToken });
+      if (!cancelled) setUsage(data);
+    })();
+    return () => { cancelled = true; };
+  }, [open, accessToken, tier]);
+
+  const planText = tier === 'pro' ? 'Pro' : tier === 'guest' ? 'Guest' : 'Free';
+  const tutorCap = usage?.tutor?.cap ?? (tier === 'pro' ? 30 : tier === 'guest' ? 2 : 5);
+  const researchCap = usage?.research?.cap ?? (tier === 'pro' ? 5 : tier === 'guest' ? 0 : 1);
+  const tutorUsed = usage?.tutor?.used ?? 0;
+  const researchUsed = usage?.research?.used ?? 0;
   const name = isGuest ? 'Guest session' : (profile?.first_name || 'Alex');
   const handle = isGuest ? '@guest' : (profile?.first_name ? `@${profile.first_name.toLowerCase()}` : '@alex');
   const go = (screen) => { onClose(); onOpenScreen(screen); };
@@ -412,13 +429,17 @@ function AccountPopover({ open, onClose, profile, isGuest, onLogout, onUpgrade, 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
             <div>
               <div className="eyebrow" style={{ fontSize: 10 }}>Current plan</div>
-              <div style={{ fontSize: 17, fontFamily: 'var(--font-display)', fontWeight: 500, marginTop: 2 }}>Free</div>
+              <div style={{ fontSize: 17, fontFamily: 'var(--font-display)', fontWeight: 500, marginTop: 2 }}>{planText}</div>
             </div>
-            <button onClick={onUpgrade} className="btn btn-accent btn-sm">Upgrade</button>
+            {tier !== 'pro' && (
+              <button onClick={onUpgrade} className="btn btn-accent btn-sm">
+                {tier === 'guest' ? 'Sign up' : 'Upgrade'}
+              </button>
+            )}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <UsageBar label="Tutor sessions" used={47} cap="∞" />
-            <UsageBar label="Research / day" used={0} cap={1} />
+            <UsageBar label="Tutor / day"    used={tutorUsed}    cap={tutorCap} />
+            <UsageBar label="Research / day" used={researchUsed} cap={researchCap} />
           </div>
         </div>
       </div>
@@ -440,7 +461,7 @@ function AccountPopover({ open, onClose, profile, isGuest, onLogout, onUpgrade, 
       <PopoverDivider />
 
       <PopoverSection>
-        <PopoverItem icon={<IconCard />}      label="Billing & subscription" onClick={() => go('soon-billing')} />
+        <PopoverItem icon={<IconCard />}      label="Billing & subscription" onClick={() => go('billing')} />
         <PopoverItem icon={<IconGift />}      label="Refer a friend"         hint="Earn 1 free research / week" onClick={() => go('soon-refer')} />
         <PopoverItem icon={<IconHelp />}      label="Help & support"         onClick={() => go('soon-help')} />
         <PopoverItem icon={<IconBook />}      label="Methods & sources"      hint="How Socrify teaches" onClick={() => go('soon-methods')} />
@@ -749,9 +770,161 @@ function ExportModal({ open, onClose }) {
   );
 }
 
+/* ===========================================================
+   Upgrade modal — Pro pitch + (deferred) Stripe checkout
+   =========================================================== */
+function UpgradeModal({ open, onClose, tier, isDev, accessToken, onTierChange, onGoAuth }) {
+  const [busy, setBusy] = React.useState(false);
+
+  const flipDevTier = async (next) => {
+    setBusy(true);
+    try {
+      const ok = await window.apiSetDevTier({ accessToken, tier: next });
+      if (ok) {
+        await onTierChange?.();
+        onClose();
+      } else {
+        alert('Could not change tier — check the console.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Socrify Pro" subtitle="Higher daily caps, same teaching" width={460}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <div style={{
+          padding: 16, borderRadius: 12,
+          background: 'linear-gradient(135deg, var(--accent-soft), var(--surface-2))',
+          border: '1px solid var(--border)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+            <span style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 500 }}>$8</span>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>per month, cancel anytime</span>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <PlanCol title="Free" highlight={tier === 'free'}>
+            <li>5 tutor sessions / day</li>
+            <li>1 research session / day</li>
+            <li>Chat history sync</li>
+          </PlanCol>
+          <PlanCol title="Pro" highlight={tier === 'pro'} accent>
+            <li>30 tutor sessions / day</li>
+            <li>5 research sessions / day</li>
+            <li>Priority on new features</li>
+          </PlanCol>
+        </div>
+
+        {tier === 'guest' ? (
+          <>
+            <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.5 }}>
+              Guests get 2 tutor sessions a day. Sign up free to bump that to 5/day with chat history sync, or grab Pro for 30/day.
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={onClose} className="btn btn-ghost btn-sm">Close</button>
+              <button onClick={onGoAuth} className="btn btn-accent btn-sm">Sign up free</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              Stripe checkout lands soon. We'll switch this button over the moment billing is wired.
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button onClick={onClose} className="btn btn-ghost btn-sm">Close</button>
+              <button
+                disabled
+                className="btn btn-accent btn-sm"
+                title="Stripe checkout — coming soon"
+                style={{ opacity: 0.6, cursor: 'not-allowed' }}
+              >
+                Subscribe with Stripe — coming soon
+              </button>
+            </div>
+
+            {isDev && (
+              <div style={{
+                marginTop: 4, padding: 12, borderRadius: 10,
+                background: 'var(--surface-2)', border: '1px dashed var(--border-2)',
+              }}>
+                <div className="eyebrow" style={{ fontSize: 10, marginBottom: 8 }}>Dev: set tier</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    disabled={busy || tier === 'free'}
+                    onClick={() => flipDevTier('free')}
+                    className="btn btn-ghost btn-sm"
+                  >Make me Free</button>
+                  <button
+                    disabled={busy || tier === 'pro'}
+                    onClick={() => flipDevTier('pro')}
+                    className="btn btn-accent btn-sm"
+                  >Make me Pro</button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function PlanCol({ title, highlight, accent, children }) {
+  return (
+    <div style={{
+      padding: 14, borderRadius: 10,
+      border: '1px solid ' + (highlight ? 'var(--accent)' : 'var(--border)'),
+      background: accent ? 'var(--accent-soft)' : 'var(--surface-2)',
+      display: 'flex', flexDirection: 'column', gap: 8,
+    }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 500, fontSize: 15 }}>{title}</div>
+      <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13, color: 'var(--text-2)', lineHeight: 1.55 }}>
+        {children}
+      </ul>
+    </div>
+  );
+}
+
+/* ===========================================================
+   Billing modal — current tier + Stripe placeholder
+   =========================================================== */
+function BillingModal({ open, onClose, tier, onOpenUpgrade }) {
+  return (
+    <Modal open={open} onClose={onClose} title="Billing & subscription">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, fontSize: 14, color: 'var(--text-2)', lineHeight: 1.55 }}>
+        <div style={{
+          padding: 14, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-2)',
+        }}>
+          <div className="eyebrow" style={{ fontSize: 10, marginBottom: 4 }}>Current plan</div>
+          <div style={{ fontSize: 18, fontFamily: 'var(--font-display)' }}>
+            {tier === 'pro' ? 'Pro · $8/mo' : tier === 'guest' ? 'Guest' : 'Free'}
+          </div>
+          {tier === 'pro' && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+              Stripe-managed renewals coming soon. Until then, your Pro access stays active.
+            </div>
+          )}
+        </div>
+        <div>
+          Payment methods, invoices, and cancellations will live here once Stripe is wired up.
+          For now you can flip plans from the Upgrade screen.
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button onClick={onClose} className="btn btn-ghost btn-sm">Close</button>
+          {tier !== 'pro' && (
+            <button onClick={() => { onClose(); onOpenUpgrade(); }} className="btn btn-accent btn-sm">See Pro</button>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 /* ── Stub "coming soon" modal for the rest ── */
 const COMING_SOON_COPY = {
-  'soon-billing': { title: 'Billing & subscription', body: "Once Socrify Pro launches you'll manage your plan, payment method, and invoices here." },
   'soon-refer':   { title: 'Refer a friend', body: 'Earn 1 free research / week for every friend who signs up. Referral codes roll out with the Pro launch.' },
   'soon-help':    { title: 'Help & support', body: 'For now, please reach out at hello@socrify.app. A full help center is on the way.' },
   'soon-methods': { title: 'Methods & sources', body: "Socrify teaches with the Socratic method — guiding through questions rather than handing over answers. A deeper write-up is coming soon." },
@@ -877,13 +1050,26 @@ function loadNotificationsEnabled() {
   return v === null ? true : v === '1';
 }
 
-function AccountButton({ profile, isGuest, onLogout, onUpgrade, compact }) {
+function AccountButton({ profile, isGuest, tier, isDev, accessToken, onTierChange, onLogout, onGoAuth, compact }) {
   const [open, setOpen] = React.useState(false);
   const [screen, setScreen] = React.useState(null);
+  const [upgradeOpen, setUpgradeOpen] = React.useState(false);
   const [notificationsOn, setNotificationsOnState] = React.useState(loadNotificationsEnabled);
   const triggerRef = React.useRef(null);
   const name = isGuest ? 'Guest' : (profile?.first_name || 'Alex');
   const initial = name.charAt(0).toUpperCase();
+  const effectiveTier = isGuest ? 'guest' : (tier || 'free');
+  const planLabel = effectiveTier === 'pro' ? 'Pro plan' : effectiveTier === 'guest' ? 'Guest' : 'Free plan';
+  const openUpgrade = () => { setOpen(false); setUpgradeOpen(true); };
+
+  // Allow code outside the tree (e.g. LimitReachedModal) to pop the upgrade modal.
+  // Only the compact (top-bar) AccountButton handles this so we don't stack two modals.
+  React.useEffect(() => {
+    if (!compact) return;
+    const handler = () => setUpgradeOpen(true);
+    window.addEventListener('socrify-open-upgrade', handler);
+    return () => window.removeEventListener('socrify-open-upgrade', handler);
+  }, [compact]);
 
   const setNotificationsOn = (v) => {
     setNotificationsOnState(v);
@@ -898,7 +1084,17 @@ function AccountButton({ profile, isGuest, onLogout, onUpgrade, compact }) {
       <PreferencesModal open={screen === 'prefs'} onClose={() => setScreen(null)} profile={profile} isGuest={isGuest} />
       <PrivacyModal open={screen === 'privacy'} onClose={() => setScreen(null)} />
       <ExportModal open={screen === 'export'} onClose={() => setScreen(null)} />
+      <BillingModal open={screen === 'billing'} onClose={() => setScreen(null)} tier={effectiveTier} onOpenUpgrade={openUpgrade} />
       <ComingSoonModal open={!!screen && screen.startsWith('soon-')} onClose={() => setScreen(null)} screen={screen} />
+      <UpgradeModal
+        open={upgradeOpen}
+        onClose={() => setUpgradeOpen(false)}
+        tier={effectiveTier}
+        isDev={isDev}
+        accessToken={accessToken}
+        onTierChange={onTierChange}
+        onGoAuth={() => { setUpgradeOpen(false); onGoAuth && onGoAuth(); }}
+      />
     </>
   );
 
@@ -908,8 +1104,10 @@ function AccountButton({ profile, isGuest, onLogout, onUpgrade, compact }) {
       onClose={() => setOpen(false)}
       profile={profile}
       isGuest={isGuest}
+      tier={effectiveTier}
+      accessToken={accessToken}
       onLogout={onLogout}
-      onUpgrade={onUpgrade}
+      onUpgrade={openUpgrade}
       onOpenScreen={setScreen}
       notificationsOn={notificationsOn}
       setNotificationsOn={setNotificationsOn}
@@ -956,7 +1154,7 @@ function AccountButton({ profile, isGuest, onLogout, onUpgrade, compact }) {
           <span style={{ display: 'block', fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {isGuest ? 'Guest session' : name}
           </span>
-          <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)' }}>Free plan</span>
+          <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)' }}>{planLabel}</span>
         </span>
         <span style={{ color: 'var(--text-muted)', fontSize: 14 }}>⋯</span>
       </button>

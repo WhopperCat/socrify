@@ -14,11 +14,20 @@ const RESEARCH_THINKING_BUDGET = 3000;
 const RESEARCH_MAX_TOKENS = 10000;
 const RESEARCH_WEB_SEARCH_MAX_USES = 5;
 
-const LIMITS = {
+// Per-hour ai_call safety net (per message, not per conversation).
+// Pro is effectively unlimited — the real ceiling is Anthropic spend.
+const HOURLY_AI_CALL_CAPS = {
   guest: 15,
   free: 60,
+  pro: 500,
 };
-const RESEARCH_DAILY_LIMIT = 1;
+
+// Per-day session_start caps — the primary gate. 1 session = 1 new conversation.
+const SESSION_CAPS = {
+  guest: { tutor: 2, research: 0 },
+  free:  { tutor: 5, research: 1 },
+  pro:   { tutor: 30, research: 5 },
+};
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -60,10 +69,10 @@ function makeSupa(url, key) {
   }
 }
 
-async function checkRateLimit(supa, { userId, ipHash, isGuest }) {
+async function checkHourlyAiCall(supa, { userId, ipHash, tier }) {
   if (!supa) return { ok: true, skipped: true };
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const cap = isGuest ? LIMITS.guest : LIMITS.free;
+  const cap = HOURLY_AI_CALL_CAPS[tier] ?? HOURLY_AI_CALL_CAPS.guest;
   let q = supa
     .from('usage_logs')
     .select('id', { count: 'exact', head: true })
@@ -73,29 +82,29 @@ async function checkRateLimit(supa, { userId, ipHash, isGuest }) {
   else q = q.eq('ip_hash', ipHash);
   const { count, error } = await q;
   if (error) {
-    console.error('Rate limit query failed:', error);
+    console.error('Hourly ai_call query failed:', error);
     return { ok: true, errored: true };
   }
   return { ok: (count || 0) < cap, used: count || 0, cap };
 }
 
-async function checkResearchDailyLimit(supa, { userId, ipHash }) {
-  if (!supa) return { ok: true, skipped: true };
+async function countDailySessionStarts(supa, { userId, ipHash, mode }) {
+  if (!supa) return 0;
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   let q = supa
     .from('usage_logs')
     .select('id', { count: 'exact', head: true })
-    .eq('event_type', 'ai_call')
-    .eq('mode', 'research')
+    .eq('event_type', 'session_start')
+    .eq('mode', mode)
     .gte('created_at', oneDayAgo);
   if (userId) q = q.eq('user_id', userId);
   else q = q.eq('ip_hash', ipHash);
   const { count, error } = await q;
   if (error) {
-    console.error('Research daily limit query failed:', error);
-    return { ok: true, errored: true };
+    console.error('Session-count query failed:', error);
+    return 0;
   }
-  return { ok: (count || 0) < RESEARCH_DAILY_LIMIT, used: count || 0, cap: RESEARCH_DAILY_LIMIT };
+  return count || 0;
 }
 
 async function logCall(supa, { userId, ipHash, mode, subject }) {
@@ -115,12 +124,12 @@ async function verifyUser(supa, authHeader) {
   const token = authHeader.slice(7);
   const { data, error } = await supa.auth.getUser(token);
   if (error || !data?.user) return null;
-  const { data: profile } = await supa
-    .from('profiles')
-    .select('is_dev')
-    .eq('id', data.user.id)
-    .maybeSingle();
-  return { id: data.user.id, is_dev: !!profile?.is_dev };
+  const [{ data: profile }, { data: sub }] = await Promise.all([
+    supa.from('profiles').select('is_dev').eq('id', data.user.id).maybeSingle(),
+    supa.from('subscriptions').select('tier,status').eq('user_id', data.user.id).maybeSingle(),
+  ]);
+  const tier = sub && sub.status === 'active' && sub.tier === 'pro' ? 'pro' : 'free';
+  return { id: data.user.id, is_dev: !!profile?.is_dev, tier };
 }
 
 export async function onRequest(context) {
@@ -161,30 +170,18 @@ export async function onRequest(context) {
   const user = await verifyUser(supa, request.headers.get('Authorization'));
   const ip = getClientIp(request);
   const ipHash = await hashIp(ip, env.IP_HASH_SALT);
-  const isGuest = !user;
+  const tier = user ? user.tier : 'guest';
   const isDev = !!user?.is_dev;
 
   if (!isDev) {
-    const rl = await checkRateLimit(supa, { userId: user?.id, ipHash, isGuest });
+    const rl = await checkHourlyAiCall(supa, { userId: user?.id, ipHash, tier });
     if (!rl.ok) {
       return json({
         error: 'rate_limited',
-        message: `Hourly limit reached (${rl.used}/${rl.cap}). Try again in a bit.`,
+        message: `Hourly message limit reached (${rl.used}/${rl.cap}). Try again in a bit.`,
         used: rl.used,
         cap: rl.cap,
       }, 429);
-    }
-
-    if (mode === 'research') {
-      const rdl = await checkResearchDailyLimit(supa, { userId: user?.id, ipHash });
-      if (!rdl.ok) {
-        return json({
-          error: 'research_daily_limit',
-          message: `Research mode is limited to ${rdl.cap} deep dive per day. Try again in 24 hours, or use Tutor mode in the meantime.`,
-          used: rdl.used,
-          cap: rdl.cap,
-        }, 429);
-      }
     }
   }
 
@@ -364,4 +361,137 @@ export async function upsertConversation({ request, env }) {
   }
 
   return json({ ok: true });
+}
+
+/* ===========================================================
+   POST /session/start — gate new conversations by daily caps
+   =========================================================== */
+export async function startSession({ request, env }) {
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
+  let body;
+  try { body = await request.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
+
+  const mode = body?.mode === 'research' ? 'research' : 'tutor';
+  const subject = typeof body?.subject === 'string' ? body.subject : null;
+  const conversationId = typeof body?.conversationId === 'string' ? body.conversationId : null;
+
+  const supa = makeSupa(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+  const user = await verifyUser(supa, request.headers.get('Authorization'));
+  const ip = getClientIp(request);
+  const ipHash = await hashIp(ip, env.IP_HASH_SALT);
+  const tier = user ? user.tier : 'guest';
+  const cap = SESSION_CAPS[tier][mode];
+  const isDev = !!user?.is_dev;
+
+  // Dev users bypass caps (matches the pattern in /chat).
+  if (isDev) {
+    if (supa) {
+      await supa.from('usage_logs').insert({
+        user_id: user.id, ip_hash: ipHash, event_type: 'session_start',
+        mode, subject, conversation_id: conversationId,
+      });
+    }
+    return json({ ok: true, used: 0, cap, tier, dev: true });
+  }
+
+  if (!supa) {
+    // Can't enforce without DB. Fail-closed for safety so this branch never silently allows unlimited.
+    return json({ error: 'server_misconfigured' }, 500);
+  }
+
+  // Insert first, then count — if over cap, delete the row we just wrote.
+  const { data: inserted, error: insErr } = await supa
+    .from('usage_logs')
+    .insert({
+      user_id: user?.id || null,
+      ip_hash: ipHash,
+      event_type: 'session_start',
+      mode,
+      subject,
+      conversation_id: conversationId,
+    })
+    .select('id')
+    .single();
+
+  if (insErr) {
+    console.error('session_start insert failed:', insErr);
+    return json({ error: 'log_failed' }, 500);
+  }
+
+  const used = await countDailySessionStarts(supa, { userId: user?.id, ipHash, mode });
+
+  if (used > cap) {
+    await supa.from('usage_logs').delete().eq('id', inserted.id);
+    return json({
+      error: 'session_limit',
+      message: tier === 'guest'
+        ? `Guests get ${cap} ${mode} sessions per day. Sign up free for more.`
+        : tier === 'free'
+          ? `Free plan: ${cap} ${mode} ${cap === 1 ? 'session' : 'sessions'}/day. Upgrade to Pro for ${SESSION_CAPS.pro[mode]}/day.`
+          : `Pro plan: ${cap} ${mode} sessions/day. Try again tomorrow.`,
+      used: used - 1,
+      cap,
+      tier,
+    }, 429);
+  }
+
+  return json({ ok: true, used, cap, tier });
+}
+
+/* ===========================================================
+   GET /usage — current tier + today's session counts
+   =========================================================== */
+export async function getUsage({ request, env }) {
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+  const supa = makeSupa(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+  const user = await verifyUser(supa, request.headers.get('Authorization'));
+  const ip = getClientIp(request);
+  const ipHash = await hashIp(ip, env.IP_HASH_SALT);
+  const tier = user ? user.tier : 'guest';
+  const caps = SESSION_CAPS[tier];
+
+  const [tutorUsed, researchUsed] = supa
+    ? await Promise.all([
+        countDailySessionStarts(supa, { userId: user?.id, ipHash, mode: 'tutor' }),
+        countDailySessionStarts(supa, { userId: user?.id, ipHash, mode: 'research' }),
+      ])
+    : [0, 0];
+
+  return json({
+    tier,
+    is_dev: !!user?.is_dev,
+    tutor:    { used: tutorUsed,    cap: caps.tutor },
+    research: { used: researchUsed, cap: caps.research },
+  });
+}
+
+/* ===========================================================
+   POST /dev/set-tier — dev-only tier flip (no Stripe yet)
+   Body: { tier: 'free' | 'pro' }
+   =========================================================== */
+export async function setDevTier({ request, env }) {
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+  const supa = makeSupa(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+  const user = await verifyUser(supa, request.headers.get('Authorization'));
+  if (!user) return json({ error: 'Unauthorized' }, 401);
+  if (!user.is_dev) return json({ error: 'Forbidden' }, 403);
+
+  let body;
+  try { body = await request.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
+  const tier = body?.tier === 'pro' ? 'pro' : 'free';
+
+  const { error } = await supa
+    .from('subscriptions')
+    .upsert({ user_id: user.id, tier, status: 'active', updated_at: new Date().toISOString() },
+            { onConflict: 'user_id' });
+  if (error) return json({ error: error.message }, 500);
+
+  return json({ ok: true, tier });
 }

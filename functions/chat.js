@@ -669,7 +669,7 @@ export async function handleStripeWebhook({ request, env }) {
     const customerId = obj.customer;
     const subscriptionId = obj.subscription;
     if (userId && customerId) {
-      await supa.from('subscriptions').upsert({
+      const { error } = await supa.from('subscriptions').upsert({
         user_id: userId,
         stripe_customer_id: customerId,
         stripe_subscription_id: subscriptionId || null,
@@ -677,6 +677,10 @@ export async function handleStripeWebhook({ request, env }) {
         status: 'active',
         updated_at: now,
       }, { onConflict: 'user_id' });
+      if (error) {
+        console.error('webhook upsert failed (checkout.session.completed):', error);
+        return json({ error: 'database_error' }, 500);
+      }
     }
   } else if (
     event.type === 'customer.subscription.created' ||
@@ -689,36 +693,52 @@ export async function handleStripeWebhook({ request, env }) {
       ? new Date(obj.current_period_end * 1000).toISOString()
       : null;
 
-    const { data: existing } = await supa
+    const { data: existing, error: lookupErr } = await supa
       .from('subscriptions')
       .select('user_id')
       .eq('stripe_customer_id', customerId)
       .maybeSingle();
+    if (lookupErr) {
+      console.error('webhook lookup failed (subscription.updated):', lookupErr);
+      return json({ error: 'database_error' }, 500);
+    }
 
     if (existing?.user_id) {
-      await supa.from('subscriptions').update({
+      const { error } = await supa.from('subscriptions').update({
         stripe_subscription_id: obj.id,
         tier: isPro ? 'pro' : 'free',
         status: 'active',
         current_period_end: periodEnd,
         updated_at: now,
       }).eq('user_id', existing.user_id);
+      if (error) {
+        console.error('webhook update failed (subscription.updated):', error);
+        return json({ error: 'database_error' }, 500);
+      }
     }
   } else if (event.type === 'customer.subscription.deleted') {
     const customerId = obj.customer;
-    const { data: existing } = await supa
+    const { data: existing, error: lookupErr } = await supa
       .from('subscriptions')
       .select('user_id')
       .eq('stripe_customer_id', customerId)
       .maybeSingle();
+    if (lookupErr) {
+      console.error('webhook lookup failed (subscription.deleted):', lookupErr);
+      return json({ error: 'database_error' }, 500);
+    }
 
     if (existing?.user_id) {
-      await supa.from('subscriptions').update({
+      const { error } = await supa.from('subscriptions').update({
         tier: 'free',
         status: 'active',
         current_period_end: null,
         updated_at: now,
       }).eq('user_id', existing.user_id);
+      if (error) {
+        console.error('webhook update failed (subscription.deleted):', error);
+        return json({ error: 'database_error' }, 500);
+      }
     }
   }
 

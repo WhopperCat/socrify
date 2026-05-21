@@ -775,6 +775,7 @@ function ExportModal({ open, onClose }) {
    =========================================================== */
 function UpgradeModal({ open, onClose, tier, isDev, accessToken, onTierChange, onGoAuth }) {
   const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState(null);
 
   const flipDevTier = async (next) => {
     setBusy(true);
@@ -787,6 +788,18 @@ function UpgradeModal({ open, onClose, tier, isDev, accessToken, onTierChange, o
         alert('Could not change tier — check the console.');
       }
     } finally {
+      setBusy(false);
+    }
+  };
+
+  const startCheckout = async () => {
+    setErr(null);
+    setBusy(true);
+    try {
+      const { url } = await window.apiCreateCheckoutSession({ accessToken });
+      window.location.href = url;
+    } catch (e) {
+      setErr(e.message === 'already_subscribed' ? "You're already on Pro!" : 'Could not start checkout. Please try again.');
       setBusy(false);
     }
   };
@@ -830,19 +843,21 @@ function UpgradeModal({ open, onClose, tier, isDev, accessToken, onTierChange, o
           </>
         ) : (
           <>
-            <div style={{ fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-              Stripe checkout lands soon. We'll switch this button over the moment billing is wired.
-            </div>
+            {err && (
+              <div style={{ fontSize: 12.5, color: 'var(--color-error, #e53e3e)', lineHeight: 1.5 }}>{err}</div>
+            )}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
               <button onClick={onClose} className="btn btn-ghost btn-sm">Close</button>
-              <button
-                disabled
-                className="btn btn-accent btn-sm"
-                title="Stripe checkout — coming soon"
-                style={{ opacity: 0.6, cursor: 'not-allowed' }}
-              >
-                Subscribe with Stripe — coming soon
-              </button>
+              {tier !== 'pro' && (
+                <button
+                  disabled={busy}
+                  onClick={startCheckout}
+                  className="btn btn-accent btn-sm"
+                  style={busy ? { opacity: 0.7, cursor: 'not-allowed' } : undefined}
+                >
+                  {busy ? 'Redirecting…' : 'Subscribe — $8/mo'}
+                </button>
+              )}
             </div>
 
             {isDev && (
@@ -891,7 +906,22 @@ function PlanCol({ title, highlight, accent, children }) {
 /* ===========================================================
    Billing modal — current tier + Stripe placeholder
    =========================================================== */
-function BillingModal({ open, onClose, tier, onOpenUpgrade }) {
+function BillingModal({ open, onClose, tier, accessToken, onOpenUpgrade }) {
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+
+  const openPortal = async () => {
+    setErr(null);
+    setBusy(true);
+    try {
+      const { url } = await window.apiOpenBillingPortal({ accessToken });
+      window.location.href = url;
+    } catch {
+      setErr('Could not open billing portal. Please try again.');
+      setBusy(false);
+    }
+  };
+
   return (
     <Modal open={open} onClose={onClose} title="Billing & subscription">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, fontSize: 14, color: 'var(--text-2)', lineHeight: 1.55 }}>
@@ -902,19 +932,31 @@ function BillingModal({ open, onClose, tier, onOpenUpgrade }) {
           <div style={{ fontSize: 18, fontFamily: 'var(--font-display)' }}>
             {tier === 'pro' ? 'Pro · $8/mo' : tier === 'guest' ? 'Guest' : 'Free'}
           </div>
-          {tier === 'pro' && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
-              Stripe-managed renewals coming soon. Until then, your Pro access stays active.
-            </div>
-          )}
         </div>
-        <div>
-          Payment methods, invoices, and cancellations will live here once Stripe is wired up.
-          For now you can flip plans from the Upgrade screen.
-        </div>
+        {err && (
+          <div style={{ fontSize: 12.5, color: 'var(--color-error, #e53e3e)' }}>{err}</div>
+        )}
+        {tier === 'pro' ? (
+          <div style={{ fontSize: 13, color: 'var(--text-2)' }}>
+            Manage your payment method, view invoices, or cancel from the Stripe billing portal.
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, color: 'var(--text-2)' }}>
+            Upgrade to Pro for 30 tutor sessions and 5 research sessions per day.
+          </div>
+        )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <button onClick={onClose} className="btn btn-ghost btn-sm">Close</button>
-          {tier !== 'pro' && (
+          {tier === 'pro' ? (
+            <button
+              onClick={openPortal}
+              disabled={busy}
+              className="btn btn-ghost btn-sm"
+              style={busy ? { opacity: 0.7, cursor: 'not-allowed' } : undefined}
+            >
+              {busy ? 'Opening…' : 'Manage subscription'}
+            </button>
+          ) : (
             <button onClick={() => { onClose(); onOpenUpgrade(); }} className="btn btn-accent btn-sm">See Pro</button>
           )}
         </div>
@@ -1084,7 +1126,7 @@ function AccountButton({ profile, isGuest, tier, isDev, accessToken, onTierChang
       <PreferencesModal open={screen === 'prefs'} onClose={() => setScreen(null)} profile={profile} isGuest={isGuest} />
       <PrivacyModal open={screen === 'privacy'} onClose={() => setScreen(null)} />
       <ExportModal open={screen === 'export'} onClose={() => setScreen(null)} />
-      <BillingModal open={screen === 'billing'} onClose={() => setScreen(null)} tier={effectiveTier} onOpenUpgrade={openUpgrade} />
+      <BillingModal open={screen === 'billing'} onClose={() => setScreen(null)} tier={effectiveTier} accessToken={accessToken} onOpenUpgrade={openUpgrade} />
       <ComingSoonModal open={!!screen && screen.startsWith('soon-')} onClose={() => setScreen(null)} screen={screen} />
       <UpgradeModal
         open={upgradeOpen}

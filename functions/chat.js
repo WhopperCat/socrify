@@ -1,9 +1,12 @@
-// Socrify — Anthropic API proxy (Cloudflare Pages Function)
-// Env vars expected (set in Cloudflare Pages dashboard):
+// Socrify — Anthropic API proxy + Stripe billing (Cloudflare Worker)
+// Env vars expected (set via: wrangler secret put <NAME>):
 //   ANTHROPIC_API_KEY
 //   SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
-//   IP_HASH_SALT  (optional)
+//   IP_HASH_SALT            (optional)
+//   STRIPE_SECRET_KEY
+//   STRIPE_WEBHOOK_SECRET
+//   STRIPE_PRO_PRICE_ID     (price_1TZcx5H8M5NDocU6W9hPIOrA)
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -129,7 +132,7 @@ async function verifyUser(supa, authHeader) {
     supa.from('subscriptions').select('tier,status').eq('user_id', data.user.id).maybeSingle(),
   ]);
   const tier = sub && sub.status === 'active' && sub.tier === 'pro' ? 'pro' : 'free';
-  return { id: data.user.id, is_dev: !!profile?.is_dev, tier };
+  return { id: data.user.id, email: data.user.email || null, is_dev: !!profile?.is_dev, tier };
 }
 
 export async function onRequest(context) {
@@ -494,4 +497,250 @@ export async function setDevTier({ request, env }) {
   if (error) return json({ error: error.message }, 500);
 
   return json({ ok: true, tier });
+}
+
+/* ===========================================================
+   Stripe helpers
+   =========================================================== */
+
+// Flatten a JS object into Stripe's bracket-encoded form params.
+// e.g. { line_items: [{ price: 'p_x', quantity: 1 }] }
+//   → "line_items[0][price]=p_x&line_items[0][quantity]=1"
+function buildStripeParams(obj) {
+  const params = new URLSearchParams();
+  function flatten(o, prefix) {
+    for (const [k, v] of Object.entries(o)) {
+      const key = prefix ? `${prefix}[${k}]` : k;
+      if (v === null || v === undefined) continue;
+      if (Array.isArray(v)) {
+        v.forEach((item, i) => {
+          if (item !== null && typeof item === 'object') flatten(item, `${key}[${i}]`);
+          else params.append(`${key}[${i}]`, item);
+        });
+      } else if (typeof v === 'object') {
+        flatten(v, key);
+      } else {
+        params.append(key, v);
+      }
+    }
+  }
+  flatten(obj, '');
+  return params;
+}
+
+async function stripeReq(path, method, data, key) {
+  const res = await fetch(`https://api.stripe.com/v1/${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: data ? buildStripeParams(data).toString() : undefined,
+  });
+  return res.json();
+}
+
+// Verify Stripe-Signature header using HMAC-SHA256.
+// Returns true if valid; false if tampered or too old (>5 min).
+async function verifyStripeSignature(rawBody, sigHeader, secret) {
+  const entries = Object.fromEntries(sigHeader.split(',').map(s => s.split('=', 2)));
+  const timestamp = entries.t;
+  const claimed = sigHeader.split(',').filter(s => s.startsWith('v1=')).map(s => s.slice(3));
+  if (!timestamp || claimed.length === 0) return false;
+  if (Math.abs(Date.now() / 1000 - parseInt(timestamp, 10)) > 300) return false;
+
+  const keyBytes = new TextEncoder().encode(secret);
+  const msgBytes = new TextEncoder().encode(`${timestamp}.${rawBody}`);
+  const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, msgBytes);
+  const hex = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
+  return claimed.some(s => s === hex);
+}
+
+/* ===========================================================
+   POST /stripe/checkout — create a Checkout Session
+   =========================================================== */
+export async function createStripeCheckout({ request, env }) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+
+  const supa = makeSupa(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+  const user = await verifyUser(supa, request.headers.get('Authorization'));
+  if (!user) return json({ error: 'Unauthorized' }, 401);
+
+  if (!env.STRIPE_SECRET_KEY)   return json({ error: 'stripe_not_configured' }, 500);
+  if (!env.STRIPE_PRO_PRICE_ID) return json({ error: 'stripe_price_not_configured' }, 500);
+
+  const { data: sub } = await supa
+    .from('subscriptions')
+    .select('stripe_customer_id, tier, status')
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (sub?.tier === 'pro' && sub?.status === 'active') {
+    return json({ error: 'already_subscribed' }, 400);
+  }
+
+  const origin = new URL(request.url).origin;
+  const params = {
+    mode: 'subscription',
+    line_items: [{ price: env.STRIPE_PRO_PRICE_ID, quantity: 1 }],
+    success_url: `${origin}/?checkout=success`,
+    cancel_url: `${origin}/?checkout=canceled`,
+    client_reference_id: user.id,
+    ...(sub?.stripe_customer_id
+      ? { customer: sub.stripe_customer_id }
+      : { customer_email: user.email || undefined }),
+  };
+
+  const session = await stripeReq('checkout/sessions', 'POST', params, env.STRIPE_SECRET_KEY);
+  if (!session.url) {
+    console.error('Stripe checkout error:', session);
+    return json({ error: 'stripe_error', detail: session.error?.message }, 500);
+  }
+
+  return json({ url: session.url });
+}
+
+/* ===========================================================
+   POST /stripe/portal — open Billing Portal for a subscriber
+   =========================================================== */
+export async function createStripePortal({ request, env }) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+
+  const supa = makeSupa(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+  const user = await verifyUser(supa, request.headers.get('Authorization'));
+  if (!user) return json({ error: 'Unauthorized' }, 401);
+
+  if (!env.STRIPE_SECRET_KEY) return json({ error: 'stripe_not_configured' }, 500);
+
+  const { data: sub } = await supa
+    .from('subscriptions')
+    .select('stripe_customer_id')
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (!sub?.stripe_customer_id) {
+    return json({ error: 'no_stripe_customer', message: 'No billing account found.' }, 404);
+  }
+
+  const origin = new URL(request.url).origin;
+  const portal = await stripeReq('billing_portal/sessions', 'POST', {
+    customer: sub.stripe_customer_id,
+    return_url: `${origin}/`,
+  }, env.STRIPE_SECRET_KEY);
+
+  if (!portal.url) {
+    console.error('Stripe portal error:', portal);
+    return json({ error: 'stripe_error', detail: portal.error?.message }, 500);
+  }
+
+  return json({ url: portal.url });
+}
+
+/* ===========================================================
+   POST /stripe/webhook — handle Stripe events
+   Subscribed events: checkout.session.completed,
+     customer.subscription.created, customer.subscription.updated,
+     customer.subscription.deleted
+   =========================================================== */
+export async function handleStripeWebhook({ request, env }) {
+  if (!env.STRIPE_WEBHOOK_SECRET || !env.STRIPE_SECRET_KEY) {
+    return json({ error: 'stripe_not_configured' }, 500);
+  }
+
+  const rawBody = await request.text();
+  const sig = request.headers.get('Stripe-Signature') || '';
+
+  if (!(await verifyStripeSignature(rawBody, sig, env.STRIPE_WEBHOOK_SECRET))) {
+    return json({ error: 'invalid_signature' }, 400);
+  }
+
+  let event;
+  try { event = JSON.parse(rawBody); } catch { return json({ error: 'invalid_json' }, 400); }
+
+  const supa = makeSupa(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+  if (!supa) return json({ error: 'server_misconfigured' }, 500);
+
+  const obj = event.data?.object;
+  const now = new Date().toISOString();
+
+  if (event.type === 'checkout.session.completed') {
+    const userId = obj.client_reference_id;
+    const customerId = obj.customer;
+    const subscriptionId = obj.subscription;
+    if (userId && customerId) {
+      const { error } = await supa.from('subscriptions').upsert({
+        user_id: userId,
+        stripe_customer_id: customerId,
+        stripe_subscription_id: subscriptionId || null,
+        tier: 'pro',
+        status: 'active',
+        updated_at: now,
+      }, { onConflict: 'user_id' });
+      if (error) {
+        console.error('webhook upsert failed (checkout.session.completed):', error);
+        return json({ error: 'database_error' }, 500);
+      }
+    }
+  } else if (
+    event.type === 'customer.subscription.created' ||
+    event.type === 'customer.subscription.updated'
+  ) {
+    const customerId = obj.customer;
+    const stripeStatus = obj.status; // active | trialing | past_due | canceled | unpaid
+    const isPro = stripeStatus === 'active' || stripeStatus === 'trialing' || stripeStatus === 'past_due';
+    const periodEnd = obj.current_period_end
+      ? new Date(obj.current_period_end * 1000).toISOString()
+      : null;
+
+    const { data: existing, error: lookupErr } = await supa
+      .from('subscriptions')
+      .select('user_id')
+      .eq('stripe_customer_id', customerId)
+      .maybeSingle();
+    if (lookupErr) {
+      console.error('webhook lookup failed (subscription.updated):', lookupErr);
+      return json({ error: 'database_error' }, 500);
+    }
+
+    if (existing?.user_id) {
+      const { error } = await supa.from('subscriptions').update({
+        stripe_subscription_id: obj.id,
+        tier: isPro ? 'pro' : 'free',
+        status: 'active',
+        current_period_end: periodEnd,
+        updated_at: now,
+      }).eq('user_id', existing.user_id);
+      if (error) {
+        console.error('webhook update failed (subscription.updated):', error);
+        return json({ error: 'database_error' }, 500);
+      }
+    }
+  } else if (event.type === 'customer.subscription.deleted') {
+    const customerId = obj.customer;
+    const { data: existing, error: lookupErr } = await supa
+      .from('subscriptions')
+      .select('user_id')
+      .eq('stripe_customer_id', customerId)
+      .maybeSingle();
+    if (lookupErr) {
+      console.error('webhook lookup failed (subscription.deleted):', lookupErr);
+      return json({ error: 'database_error' }, 500);
+    }
+
+    if (existing?.user_id) {
+      const { error } = await supa.from('subscriptions').update({
+        tier: 'free',
+        status: 'active',
+        current_period_end: null,
+        updated_at: now,
+      }).eq('user_id', existing.user_id);
+      if (error) {
+        console.error('webhook update failed (subscription.deleted):', error);
+        return json({ error: 'database_error' }, 500);
+      }
+    }
+  }
+
+  return json({ received: true });
 }

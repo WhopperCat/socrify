@@ -10,6 +10,14 @@ workers_dev = true
 # SUPABASE_SERVICE_ROLE_KEY    (server-side only, bypasses RLS)
 # SUPABASE_ANON_KEY            (exposed to frontend via /config.js — MUST be the anon key, never the service role)
 # IP_HASH_SALT
+# STRIPE_SECRET_KEY            (from Stripe Dashboard → Developers → API keys)
+# STRIPE_PUBLISHABLE_KEY       (exposed to frontend via /config.js — safe to be public)
+# STRIPE_WEBHOOK_SECRET        (from Stripe Dashboard → Developers → Webhooks → signing secret)
+#                               Webhook endpoint: https://<your-worker>.workers.dev/stripe/webhook
+#                               Events to subscribe: checkout.session.completed,
+#                                 customer.subscription.created, customer.subscription.updated,
+#                                 customer.subscription.deleted
+# STRIPE_PRO_PRICE_ID          price_1TZcx5H8M5NDocU6W9hPIOrA  (sandbox)
 #
 # One-time Supabase dashboard step: Authentication → Providers → Email →
 # turn OFF "Confirm email" so signups work without an inbox round-trip during the beta.

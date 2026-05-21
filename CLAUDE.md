@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Code review
+
+When a `github-webhook-activity` event arrives containing a comment from `gemini-code-assist[bot]`, read it and address any actionable feedback — fix the issue, commit, and push. Do this automatically without waiting to be asked.
+
 ## What this is
 
 Socrify Beta — a Socratic AI tutoring platform. A single-page React app served by a Cloudflare Worker that also proxies Anthropic's API and talks to Supabase for auth, persistence, and usage gating.

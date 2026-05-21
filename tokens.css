@@ -418,3 +418,91 @@ html.reduce-motion *::after {
   transition-duration: 0.01ms !important;
   scroll-behavior: auto !important;
 }
+
+/* ===== Markdown prose ===== */
+.prose {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.prose > :first-child { margin-top: 0; }
+.prose > :last-child  { margin-bottom: 0; }
+
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  color: var(--text);
+}
+.prose h1 { font-size: 1.55em; margin: 1.2em 0 0.45em; }
+.prose h2 { font-size: 1.25em; margin: 1.1em 0 0.4em; }
+.prose h3 { font-size: 1.08em; margin: 1em 0 0.35em; letter-spacing: -0.01em; }
+.prose h4 { font-size: 1em; margin: 0.85em 0 0.3em; color: var(--text-2); font-family: var(--font-sans); }
+
+.prose p   { margin: 0 0 0.85em; }
+.prose a   { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
+.prose a:hover { color: var(--accent-hover); }
+.prose strong { font-weight: 600; }
+.prose em { font-family: var(--font-emph); font-style: italic; }
+
+.prose ul, .prose ol { margin: 0 0 0.85em; padding-left: 1.55em; }
+.prose li { margin: 0.25em 0; }
+.prose li > p { margin: 0; }
+.prose ul ul, .prose ol ul { list-style-type: circle; margin: 0.15em 0; }
+
+/* Inline code */
+.prose :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.87em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 6px;
+  color: var(--text);
+}
+
+/* Code block */
+.prose pre {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow-x: auto;
+  margin: 0 0 1em;
+  background: var(--surface-2); /* fallback when hljs not loaded */
+  padding: 0;
+}
+.prose pre > code {
+  display: block;
+  padding: 16px;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.55;
+  background: transparent;
+}
+/* When hljs is active it sets its own background on .hljs — let it show */
+.prose pre > code.hljs {
+  border-radius: calc(var(--r) - 1px);
+}
+
+.prose blockquote {
+  margin: 0 0 0.85em;
+  padding: 0.4em 0 0.4em 1em;
+  border-left: 3px solid var(--accent);
+  color: var(--text-2);
+  font-family: var(--font-emph);
+  font-style: italic;
+}
+.prose blockquote p { margin: 0; }
+
+.prose hr { border: none; border-top: 1px solid var(--border); margin: 1.2em 0; }
+
+.prose table { width: 100%; border-collapse: collapse; margin: 0 0 1em; font-size: 14.5px; }
+.prose th, .prose td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; }
+.prose th { background: var(--surface-2); font-weight: 600; font-size: 12.5px; letter-spacing: 0.04em; text-transform: uppercase; }
+.prose tr:nth-child(even) > td { background: var(--bg-tint); }
+
+.prose img { max-width: 100%; border-radius: var(--r); margin: 0.5em 0; display: block; }
+
+/* Dark mode adjustments */
+html.dark .prose :not(pre) > code { background: oklch(0.26 0.012 265); border-color: var(--border-2); }

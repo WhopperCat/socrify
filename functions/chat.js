@@ -225,6 +225,14 @@ export async function onRequest(context) {
     }];
   }
 
+  // Include the PDF beta header only when the conversation contains PDF documents
+  const hasPdf = messages.some(m =>
+    Array.isArray(m.content) &&
+    m.content.some(b => b.type === 'document' && b.source?.media_type === 'application/pdf')
+  );
+  const betaFlags = ['prompt-caching-2024-07-31'];
+  if (hasPdf) betaFlags.push('pdfs-2024-09-25');
+
   try {
     const apiRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -232,7 +240,7 @@ export async function onRequest(context) {
         'Content-Type': 'application/json',
         'x-api-key': ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'prompt-caching-2024-07-31',
+        'anthropic-beta': betaFlags.join(','),
       },
       body: JSON.stringify(requestBody),
     });

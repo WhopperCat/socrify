@@ -24,9 +24,13 @@ npx wrangler dev
 # so the ordering in deploy.sh matters — don't reorder it.
 ./deploy.sh
 
-# Set a single secret manually
-npx wrangler secret put ANTHROPIC_API_KEY    # also: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
-                                              # SUPABASE_ANON_KEY, IP_HASH_SALT
+# Set a single secret manually. Full set deploy.sh pushes:
+#   ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+#   SUPABASE_ANON_KEY, IP_HASH_SALT, STRIPE_SECRET_KEY,
+#   STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRO_PRICE_ID.
+# Any new env var read by worker.js / functions/chat.js must be added to
+# deploy.sh too — otherwise it'll silently be empty in prod.
+npx wrangler secret put ANTHROPIC_API_KEY
 
 # Tail production logs
 npx wrangler tail
@@ -48,8 +52,11 @@ Routes:
 - `GET/POST /history` — fetch/upsert a user's conversations (auth required).
 - `POST /session/start` — gates each new conversation against daily per-tier caps. **Must be called before launching a new session.**
 - `GET /usage` — current tier + today's session counts.
-- `POST /dev/set-tier` — dev-only tier flip (no Stripe yet).
-- `GET /config.js` — emits `window.__SOCRIFY_CONFIG__` with `supabaseUrl` and `supabaseAnonKey`. **Never include the service role key here.**
+- `POST /dev/set-tier` — dev-only tier flip; bypasses Stripe.
+- `POST /stripe/checkout` — creates a Checkout Session for the Pro price and returns its URL. Auth required.
+- `POST /stripe/portal` — creates a Billing Portal session for the signed-in user. Auth required.
+- `POST /stripe/webhook` — receives Stripe events (raw body; signature verified with `STRIPE_WEBHOOK_SECRET`). On `checkout.session.completed` / subscription updates it upserts `subscriptions` for the user. DB failures return 500 so Stripe retries.
+- `GET /config.js` — emits `window.__SOCRIFY_CONFIG__` with `supabaseUrl`, `supabaseAnonKey`, and `stripePublishableKey`. **Never include the service role key or Stripe secret key here.**
 
 ### Two-layer rate limiting (`functions/chat.js`)
 
@@ -103,6 +110,12 @@ Two migrations in `supabase/migrations/`:
 
 **Supabase dashboard setup:** Authentication → Providers → Email → turn **off** "Confirm email" so beta signups work without an inbox round-trip (noted in `wrangler.toml`).
 
+### Stripe billing
+
+- One product, one recurring price; the price ID is supplied via `STRIPE_PRO_PRICE_ID`. `createStripeCheckout` returns a Checkout URL the frontend redirects to; `createStripePortal` returns a Billing Portal URL for managing/cancelling.
+- The webhook handler reads the raw body (don't JSON-parse it before verification), verifies `Stripe-Signature` against `STRIPE_WEBHOOK_SECRET` using HMAC-SHA256, then updates `subscriptions` via the service role key. DB write failures intentionally return 500 so Stripe retries the event (#27 follow-up).
+- `subscriptions.tier='pro' AND status='active'` is the only thing that promotes a user to Pro both client- and server-side. Webhook is authoritative — never set tier from the client.
+
 ### Static asset gotcha
 
 `.assetsignore` is load-bearing: it prevents `worker.js`, `functions/`, `package.json`, `wrangler.toml`, `Socrify_Full_Product_Plan_v3.html`, etc. from being served as public static files. Any new server-only file added to the repo root must be added to `.assetsignore`.
@@ -114,4 +127,4 @@ Two migrations in `supabase/migrations/`:
 - **Conversation IDs** are client-generated: `conv_<timestamp>_<random>`. They're the primary key in `conversations` and must be passed to `/session/start` so the gate row references the session it gated.
 - **Message length cap**: `/chat` rejects conversations with more than 60 messages (`functions/chat.js:165`).
 - **Attachment cap**: 10 MB per file (`MAX_ATTACH_BYTES` in `app-shell.jsx`). Images → base64 `image` block, PDFs → base64 `document` block, other files → inline as text.
-- **Branch policy**: this session is on `claude/claude-md-docs-AR6z5` per task instructions. Develop, commit, and push there.
+- **Branch policy**: each task specifies its own working branch in the session prompt — use that one, don't push to `main` directly.

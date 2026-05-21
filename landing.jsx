@@ -8,7 +8,7 @@ const { useState, useEffect, useRef } = React;
 /* ---------- Shared chrome ---------- */
 function TopNav({ inkLogo = false, right, variant }) {
   return (
-    <header style={{
+    <header className="r-topnav" style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       padding: '20px 40px', position: 'relative', zIndex: 5,
     }}>
@@ -20,18 +20,18 @@ function TopNav({ inkLogo = false, right, variant }) {
 
 function FooterFineprint() {
   return (
-    <footer style={{
+    <footer className="r-footer" style={{
       padding: '32px 40px 28px', display: 'flex', justifyContent: 'space-between',
       flexWrap: 'wrap', gap: 16, borderTop: '1px solid var(--border)',
       fontSize: 13, color: 'var(--text-muted)',
     }}>
-      <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
+      <div className="r-footer-meta" style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
         <span className="mono" style={{ fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
           © Socrify 2026
         </span>
         <span>Beta — Tutor & Research modes.</span>
       </div>
-      <div style={{ display: 'flex', gap: 22 }}>
+      <div className="r-footer-links" style={{ display: 'flex', gap: 22 }}>
         <a href="#" style={linkStyle}>Privacy</a>
         <a href="#" style={linkStyle}>Terms</a>
         <a href="#" style={linkStyle}>Contact</a>
@@ -59,7 +59,7 @@ function Landing({ onSignIn, onGuest, settingsProps, variant }) {
       />
 
       {/* Decorative oversized mark in corner */}
-      <div aria-hidden="true" style={{
+      <div aria-hidden="true" className="r-hero-decor" style={{
         position: 'absolute', right: '-180px', top: '40px',
         opacity: 0.06, pointerEvents: 'none',
         color: 'var(--accent)',
@@ -67,9 +67,9 @@ function Landing({ onSignIn, onGuest, settingsProps, variant }) {
         <SparkMark size={620} />
       </div>
 
-      <main style={{ flex: 1, padding: '60px 40px 80px', maxWidth: 1180, margin: '0 auto', width: '100%', position: 'relative', zIndex: 2 }}>
+      <main className="r-pad-page" style={{ flex: 1, padding: '60px 40px 80px', maxWidth: 1180, margin: '0 auto', width: '100%', position: 'relative', zIndex: 2 }}>
         {/* Hero */}
-        <section style={{ display: 'grid', gridTemplateColumns: '1.15fr 1fr', gap: 80, alignItems: 'center' }}>
+        <section className="r-cols-1" style={{ display: 'grid', gridTemplateColumns: '1.15fr 1fr', gap: 80, alignItems: 'center' }}>
           <div className="fade-in-up">
             <div className="eyebrow" style={{ marginBottom: 22 }}>
               <span style={{ color: 'var(--accent-ink)' }}>●</span>&nbsp;&nbsp;Socratic tutoring, reimagined
@@ -94,7 +94,7 @@ function Landing({ onSignIn, onGuest, settingsProps, variant }) {
               </button>
               <button onClick={onGuest} className="btn btn-ghost btn-lg">Try as guest</button>
             </div>
-            <div style={{ marginTop: 32, display: 'flex', gap: 28, fontSize: 13, color: 'var(--text-muted)' }}>
+            <div className="r-hero-bullets" style={{ marginTop: 32, display: 'flex', gap: 28, fontSize: 13, color: 'var(--text-muted)' }}>
               <span>✓ &nbsp;Free forever</span>
               <span>✓ &nbsp;No email required</span>
               <span>✓ &nbsp;Dyslexia-friendly</span>
@@ -114,7 +114,7 @@ function Landing({ onSignIn, onGuest, settingsProps, variant }) {
             Three principles. <em>One</em> very stubborn AI.
           </h2>
 
-          <div className="stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 }}>
+          <div className="stagger r-cols-1" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 }}>
             <PillarCard
               num="01"
               title="Socratic, by default"
@@ -134,7 +134,7 @@ function Landing({ onSignIn, onGuest, settingsProps, variant }) {
         </section>
 
         {/* Modes preview */}
-        <section style={{ marginTop: 120, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+        <section className="r-cols-1" style={{ marginTop: 120, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
           <ModePreviewCard
             kind="tutor"
             label="Tutor mode"
@@ -151,7 +151,7 @@ function Landing({ onSignIn, onGuest, settingsProps, variant }) {
 
         {/* Quote */}
         <section style={{ marginTop: 140, padding: '60px 0', textAlign: 'center', position: 'relative' }}>
-          <span className="q-glyph" style={{ fontSize: 180, position: 'absolute', left: '50%', top: 0, transform: 'translateX(-50%)', opacity: 0.12 }}>&ldquo;</span>
+          <span className="q-glyph r-quote-glyph" style={{ fontSize: 180, position: 'absolute', left: '50%', top: 0, transform: 'translateX(-50%)', opacity: 0.12 }}>&ldquo;</span>
           <blockquote style={{ position: 'relative' }}>
             <p className="display" style={{
               fontSize: 'clamp(28px, 3.4vw, 42px)', lineHeight: 1.25,
@@ -209,7 +209,7 @@ function ModePreviewCard({ kind, label, line, sub }) {
 /* Mock chat snippet for hero — pure visual, not interactive */
 function DialoguePreview() {
   return (
-    <div className="card-lg" style={{ padding: 24, position: 'relative' }}>
+    <div className="card-lg r-dialogue-preview" style={{ padding: 24, position: 'relative' }}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 14,
         borderBottom: '1px solid var(--border)', marginBottom: 18,
@@ -281,10 +281,10 @@ function Auth({ onBack, onSuccess, settingsProps, variant }) {
         right={<SettingsCluster {...settingsProps} compact />}
       />
       <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 24px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 60, maxWidth: 920, width: '100%', alignItems: 'center' }}>
+        <div className="r-cols-1 r-auth-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 60, maxWidth: 920, width: '100%', alignItems: 'center' }}>
 
           {/* Editorial side */}
-          <div className="fade-in-up" style={{ paddingRight: 20 }}>
+          <div className="fade-in-up r-auth-side" style={{ paddingRight: 20 }}>
             <div className="eyebrow" style={{ marginBottom: 18 }}>
               {mode === 'signin' ? 'Welcome back' : 'New here'}
             </div>
@@ -302,7 +302,7 @@ function Auth({ onBack, onSuccess, settingsProps, variant }) {
             </p>
           </div>
 
-          <form onSubmit={submit} className="card-lg fade-in-up" style={{ padding: 32, animationDelay: '0.08s' }}>
+          <form onSubmit={submit} className="card-lg r-card fade-in-up" style={{ padding: 32, animationDelay: '0.08s' }}>
             <button type="button" onClick={onBack} className="btn btn-bare btn-sm" style={{ marginBottom: 14, paddingLeft: 0 }}>
               ← Back
             </button>
@@ -442,7 +442,7 @@ function Onboarding({ onDone, settingsProps, variant }) {
             }} />
           </div>
 
-          <div className="card-lg fade-in" key={cur.key} style={{ padding: 36 }}>
+          <div className="card-lg r-onboard-card fade-in" key={cur.key} style={{ padding: 36 }}>
             <h2 className="display" style={{ fontSize: 'clamp(28px, 3vw, 38px)', margin: '0 0 8px', lineHeight: 1.1 }}>
               {cur.title}
             </h2>
@@ -450,9 +450,9 @@ function Onboarding({ onDone, settingsProps, variant }) {
 
             <div>{cur.render()}</div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 36 }}>
+            <div className="r-onboard-actions" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 36 }}>
               <button onClick={back} className="btn btn-bare" disabled={step === 0}>← Back</button>
-              <div style={{ display: 'flex', gap: 10 }}>
+              <div className="r-onboard-right" style={{ display: 'flex', gap: 10 }}>
                 {!cur.ok() && step < steps.length - 1 && (
                   <span style={{ fontSize: 12, color: 'var(--text-faint)', alignSelf: 'center' }}>Pick at least one to continue</span>
                 )}

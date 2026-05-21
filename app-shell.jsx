@@ -285,6 +285,7 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
   const [mode, setMode] = React.useState('tutor');
   const [sessionConfig, setSessionConfig] = React.useState(null);
   const [history, setHistory] = React.useState(() => loadHistory());
+  const [sidebarOpen, setSidebarOpen] = React.useState(false);
 
   const updateConversation = React.useCallback((conv) => {
     setHistory(prev => {
@@ -303,6 +304,7 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
       subject: sub, mode: m, difficulty, teachingStyle, initialTopic, initialAttachments,
       convId: 'conv_' + Date.now() + '_' + Math.random().toString(36).slice(2),
     });
+    setSidebarOpen(false);
   };
 
   const loadConversation = (conv) => {
@@ -320,9 +322,10 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
       convId: conv.id,
       restoredConv: conv,
     });
+    setSidebarOpen(false);
   };
 
-  const endSession = () => setSessionConfig(null);
+  const endSession = () => { setSessionConfig(null); setSidebarOpen(false); };
   const activeConvId = sessionConfig?.convId ?? null;
   const displayName = isGuest ? 'guest' : (profile?.first_name || 'friend');
 
@@ -343,8 +346,13 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
         setFontSize={setFontSize}
         reduceMotion={reduceMotion}
         setReduceMotion={setReduceMotion}
+        onToggleSidebar={() => setSidebarOpen(o => !o)}
+        sidebarOpen={sidebarOpen}
       />
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
+        {sidebarOpen && (
+          <div className="sidebar-overlay mobile-only" onClick={() => setSidebarOpen(false)} aria-hidden="true" />
+        )}
         <Sidebar
           subject={subject} setSubject={setSubject}
           difficulty={difficulty} setDifficulty={setDifficulty}
@@ -359,6 +367,7 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
           activeConvId={activeConvId}
           onLoadConversation={loadConversation}
           onNewChat={endSession}
+          mobileOpen={sidebarOpen}
         />
         <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {!sessionConfig ? (
@@ -382,21 +391,30 @@ function AppShell({ profile, isGuest, onLogout, onGuestExit, settingsProps, vari
 }
 
 /* ---------- top bar ---------- */
-function AppTopBar({ displayName, isGuest, onLogout, onGuestExit, settingsProps, variant, inSession, onExitSession, sessionConfig, profile, fontSize, setFontSize, reduceMotion, setReduceMotion }) {
+function AppTopBar({ displayName, isGuest, onLogout, onGuestExit, settingsProps, variant, inSession, onExitSession, sessionConfig, profile, fontSize, setFontSize, reduceMotion, setReduceMotion, onToggleSidebar, sidebarOpen }) {
   return (
-    <header style={{
+    <header className="r-appbar" style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)',
       flexShrink: 0, height: 60,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+      <div className="r-appbar-left" style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
+        <button
+          type="button"
+          className="hamburger-btn mobile-only"
+          onClick={onToggleSidebar}
+          aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={sidebarOpen ? 'true' : 'false'}
+        >
+          <HamburgerIcon open={sidebarOpen} />
+        </button>
         <SocrifyLogo variant={variant} size={22} showWord showBeta />
 
         {inSession && sessionConfig && (
           <>
-            <div style={{ width: 1, height: 18, background: 'var(--border-2)' }} />
-            <button onClick={onExitSession} className="btn btn-bare btn-sm" style={{ paddingLeft: 0 }}>← All subjects</button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5 }}>
+            <div className="session-meta" style={{ width: 1, height: 18, background: 'var(--border-2)' }} />
+            <button onClick={onExitSession} className="btn btn-bare btn-sm session-meta" style={{ paddingLeft: 0 }}>← All subjects</button>
+            <div className="session-meta" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5 }}>
               <span style={{ fontFamily: 'var(--font-emph)', fontStyle: 'italic', color: 'var(--text-muted)' }}>
                 {sessionConfig.subject.label}
               </span>
@@ -406,7 +424,7 @@ function AppTopBar({ displayName, isGuest, onLogout, onGuestExit, settingsProps,
           </>
         )}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div className="r-appbar-right" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <SettingsButton
           settingsProps={settingsProps}
           fontSize={fontSize}
@@ -426,12 +444,31 @@ function AppTopBar({ displayName, isGuest, onLogout, onGuestExit, settingsProps,
   );
 }
 
+function HamburgerIcon({ open }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      {open ? (
+        <>
+          <line x1="4" y1="4" x2="16" y2="16" />
+          <line x1="16" y1="4" x2="4" y2="16" />
+        </>
+      ) : (
+        <>
+          <line x1="3" y1="6" x2="17" y2="6" />
+          <line x1="3" y1="10" x2="17" y2="10" />
+          <line x1="3" y1="14" x2="17" y2="14" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 /* ===========================================================
    SIDEBAR — teaching controls + chat history
    =========================================================== */
-function Sidebar({ subject, setSubject, difficulty, setDifficulty, teachingStyle, setTeachingStyle, mode, setMode, inSession, onLaunch, profile, isGuest, onLogout, history, activeConvId, onLoadConversation, onNewChat }) {
+function Sidebar({ subject, setSubject, difficulty, setDifficulty, teachingStyle, setTeachingStyle, mode, setMode, inSession, onLaunch, profile, isGuest, onLogout, history, activeConvId, onLoadConversation, onNewChat, mobileOpen }) {
   return (
-    <aside style={{
+    <aside className={`app-sidebar ${mobileOpen ? 'is-open' : ''}`} style={{
       width: 272, flexShrink: 0, borderRight: '1px solid var(--border)',
       background: 'var(--surface)', display: 'flex', flexDirection: 'column',
       overflow: 'hidden',
@@ -578,9 +615,9 @@ function Dashboard({ displayName, subject, setSubject, difficulty, teachingStyle
 
   return (
     <div className="bg-paper grain" style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
-      <div style={{ maxWidth: 880, margin: '0 auto', padding: '64px 40px 80px' }}>
+      <div className="r-pad-page" style={{ maxWidth: 880, margin: '0 auto', padding: '64px 40px 80px' }}>
 
-        <div className="fade-in-up">
+        <div className="fade-in-up r-dash-hero">
           <div className="eyebrow" style={{ marginBottom: 14 }}>{getGreeting()}, {displayName}</div>
           <h1 className="display" style={{ fontSize: 'clamp(40px, 5vw, 64px)', margin: '0 0 12px', lineHeight: 1.05, maxWidth: '18ch' }}>
             What do you want to <em>think</em> about today?
@@ -827,31 +864,34 @@ function SessionView({ config, onExit, onConversationUpdate }) {
     <div className="bg-paper" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
 
       {/* Session header */}
-      <div style={{
+      <div className="r-session-header" style={{
         padding: '20px 32px', borderBottom: '1px solid var(--border)',
         background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 14,
       }}>
-        <div style={{
+        <div className="r-session-icon" style={{
           width: 38, height: 38, borderRadius: 10,
           background: 'var(--accent-soft)', color: 'var(--accent-ink)',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           fontFamily: 'var(--font-display)', fontStyle: 'italic', fontSize: 20,
+          flexShrink: 0,
         }}>{config.subject.icon}</div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, lineHeight: 1.1 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="r-session-title" style={{ fontFamily: 'var(--font-display)', fontSize: 22, lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {config.subject.label}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+          <div className="r-session-meta-line" style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
             {config.mode === 'tutor' ? <>Tutor · <span style={{ textTransform: 'capitalize' }}>{config.teachingStyle}</span> · {config.difficulty}</> : <>Research mode · Deep search</>}
           </div>
         </div>
-        <ExportMenu messages={messages} config={config} />
-        <button onClick={onExit} className="btn btn-bare btn-sm">End session</button>
+        <div className="r-session-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <ExportMenu messages={messages} config={config} />
+          <button onClick={onExit} className="btn btn-bare btn-sm">End session</button>
+        </div>
       </div>
 
       {/* Chat scroll */}
-      <div ref={scrollRef} className="scroll-thin" style={{ flex: 1, overflowY: 'auto', padding: '32px 0' }}>
-        <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 32px', display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div ref={scrollRef} className="scroll-thin r-session-scroll" style={{ flex: 1, overflowY: 'auto', padding: '32px 0' }}>
+        <div className="r-session-scroll-inner" style={{ maxWidth: 760, margin: '0 auto', padding: '0 32px', display: 'flex', flexDirection: 'column', gap: 24 }}>
           {messages.map((m, i) => (
             <Message key={m.id} msg={m} isFirst={i === 0} />
           ))}
@@ -860,11 +900,11 @@ function SessionView({ config, onExit, onConversationUpdate }) {
       </div>
 
       {/* Composer */}
-      <div style={{ padding: '16px 32px 24px', background: 'var(--bg)' }}>
+      <div className="r-composer" style={{ padding: '16px 32px 24px', background: 'var(--bg)' }}>
         <div style={{ maxWidth: 760, margin: '0 auto' }}>
 
           {/* Quick actions */}
-          <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+          <div className="r-quick-actions" style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
             <QuickAction onClick={() => send("[I'M STUCK] I don't know where to start.")}>I'm stuck</QuickAction>
             <QuickAction onClick={() => send('Can you simplify that?')}>Simpler</QuickAction>
             <QuickAction onClick={() => send('Give me a hint, please.')}>Hint, please</QuickAction>
@@ -929,7 +969,7 @@ function Message({ msg, isFirst }) {
     const labels = msg.attachmentLabels || [];
     return (
       <div style={{ display: 'flex', justifyContent: 'flex-end' }} className="fade-in-up">
-        <div style={{ maxWidth: '78%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+        <div className="r-message-student" style={{ maxWidth: '78%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
           {labels.length > 0 && (
             <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               {labels.map((lbl, i) => (
@@ -955,7 +995,7 @@ function Message({ msg, isFirst }) {
   // Tutor / research response
   const hasCitations = msg.citations && msg.citations.length > 0;
   return (
-    <div className="fade-in-up" style={{ display: 'flex', gap: 14, paddingRight: '8%' }}>
+    <div className="fade-in-up r-message-tutor" style={{ display: 'flex', gap: 14, paddingRight: '8%' }}>
       <div style={{ flexShrink: 0, paddingTop: 4 }}>
         <SparkMark size={26} style={{ color: 'var(--accent)' }} />
       </div>

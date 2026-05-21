@@ -7,3 +7,9 @@ compatibility_flags = ["nodejs_compat"]
 directory = "."
 binding = "ASSETS"
 not_found_handling = "single-page-application"
+
+# Non-sensitive vars committed here so they survive every deploy automatically.
+# Secrets (ANTHROPIC_API_KEY, SUPABASE_SERVICE_ROLE_KEY, IP_HASH_SALT) must be
+# set once via `wrangler secret put <NAME>` — they persist on Cloudflare's side.
+[vars]
+SUPABASE_URL = "https://yjdbrvzdldygbfvxrzbg.supabase.co"

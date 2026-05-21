@@ -1,13 +1,13 @@
 # Copy this file to .dev.vars for local development with `wrangler dev`.
 # .dev.vars is gitignored — never commit real secrets.
 #
-# For production, set each of these as Worker secrets (they persist across deploys):
+# SUPABASE_URL is already set in wrangler.toml [vars] for production.
+# The three secrets below must be set once via `wrangler secret put <NAME>`:
 #   wrangler secret put ANTHROPIC_API_KEY
-#   wrangler secret put SUPABASE_URL
 #   wrangler secret put SUPABASE_SERVICE_ROLE_KEY
-#   wrangler secret put IP_HASH_SALT
+#   wrangler secret put IP_HASH_SALT   # optional
 
+SUPABASE_URL=https://yjdbrvzdldygbfvxrzbg.supabase.co
 ANTHROPIC_API_KEY=
-SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 IP_HASH_SALT=

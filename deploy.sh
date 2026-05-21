@@ -8,4 +8,9 @@ npx wrangler deploy
 echo "$ANTHROPIC_API_KEY"          | npx wrangler secret put ANTHROPIC_API_KEY
 echo "$SUPABASE_URL"               | npx wrangler secret put SUPABASE_URL
 echo "$SUPABASE_SERVICE_ROLE_KEY"  | npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+echo "$SUPABASE_ANON_KEY"          | npx wrangler secret put SUPABASE_ANON_KEY
 echo "$IP_HASH_SALT"               | npx wrangler secret put IP_HASH_SALT
+echo "$STRIPE_SECRET_KEY"          | npx wrangler secret put STRIPE_SECRET_KEY
+echo "$STRIPE_PUBLISHABLE_KEY"     | npx wrangler secret put STRIPE_PUBLISHABLE_KEY
+echo "$STRIPE_WEBHOOK_SECRET"      | npx wrangler secret put STRIPE_WEBHOOK_SECRET
+echo "$STRIPE_PRO_PRICE_ID"        | npx wrangler secret put STRIPE_PRO_PRICE_ID

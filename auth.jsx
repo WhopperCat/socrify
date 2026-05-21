@@ -127,8 +127,25 @@ async function apiSetDevTier({ accessToken, tier }) {
   return res.ok;
 }
 
+// Returns { url } on success or throws.
+async function apiCreateCheckoutSession({ accessToken }) {
+  const res = await authedFetch('/stripe/checkout', { method: 'POST', accessToken });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'checkout_failed');
+  return data;
+}
+
+// Returns { url } on success or throws.
+async function apiOpenBillingPortal({ accessToken }) {
+  const res = await authedFetch('/stripe/portal', { method: 'POST', accessToken });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'portal_failed');
+  return data;
+}
+
 Object.assign(window, {
   authSignUp, authSignIn, authSignOut, fetchProfileBundle,
   useAuthSession, authedFetch,
   apiStartSession, apiGetUsage, apiSetDevTier,
+  apiCreateCheckoutSession, apiOpenBillingPortal,
 });

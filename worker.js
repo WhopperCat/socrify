@@ -1,4 +1,7 @@
-import { onRequest, getHistory, upsertConversation, startSession, getUsage, setDevTier } from './functions/chat.js';
+import {
+  onRequest, getHistory, upsertConversation, startSession, getUsage, setDevTier,
+  createStripeCheckout, createStripePortal, handleStripeWebhook,
+} from './functions/chat.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -39,12 +42,28 @@ export default {
       if (request.method === 'POST') return setDevTier({ request, env, ctx });
     }
 
+    if (url.pathname === '/stripe/checkout') {
+      if (request.method === 'OPTIONS') return preflight();
+      if (request.method === 'POST') return createStripeCheckout({ request, env, ctx });
+    }
+
+    if (url.pathname === '/stripe/portal') {
+      if (request.method === 'OPTIONS') return preflight();
+      if (request.method === 'POST') return createStripePortal({ request, env, ctx });
+    }
+
+    // Stripe webhook — must receive raw body for signature verification, no preflight needed.
+    if (url.pathname === '/stripe/webhook') {
+      if (request.method === 'POST') return handleStripeWebhook({ request, env, ctx });
+    }
+
     // Public bootstrap config. MUST expose the anon key only — never the service role key.
     // The frontend reads window.__SOCRIFY_CONFIG__ to boot its Supabase client.
     if (url.pathname === '/config.js') {
       const cfg = {
         supabaseUrl: env.SUPABASE_URL || '',
         supabaseAnonKey: env.SUPABASE_ANON_KEY || '',
+        stripePublishableKey: env.STRIPE_PUBLISHABLE_KEY || '',
       };
       return new Response(
         `window.__SOCRIFY_CONFIG__ = ${JSON.stringify(cfg)};`,

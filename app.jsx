@@ -65,6 +65,24 @@ function Root() {
     if (auth.user && view === 'landing') setView('dashboard');
   }, [auth.ready, auth.user]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Handle Stripe redirect — show a brief banner and refresh tier state.
+  const [checkoutBanner, setCheckoutBanner] = React.useState(() => {
+    const p = new URLSearchParams(window.location.search).get('checkout');
+    if (p) {
+      // Clean the URL without a reload.
+      const clean = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, '', clean);
+    }
+    return p || null;
+  });
+  React.useEffect(() => {
+    if (checkoutBanner === 'success') auth.refresh();
+    if (checkoutBanner) {
+      const t = setTimeout(() => setCheckoutBanner(null), 6000);
+      return () => clearTimeout(t);
+    }
+  }, [checkoutBanner]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const variant = tweaks.logoVariant;
 
   let screen;
@@ -101,6 +119,22 @@ function Root() {
 
   return (
     <>
+      {checkoutBanner && (
+        <div style={{
+          position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 2000, padding: '10px 20px', borderRadius: 999,
+          background: checkoutBanner === 'success' ? 'var(--accent)' : 'var(--surface-2)',
+          color: checkoutBanner === 'success' ? '#fff' : 'var(--text-2)',
+          border: '1px solid ' + (checkoutBanner === 'success' ? 'transparent' : 'var(--border)'),
+          fontSize: 14, fontWeight: 500, boxShadow: 'var(--shadow-lg)',
+          animation: 'fadeInUp .2s ease',
+          whiteSpace: 'nowrap',
+        }}>
+          {checkoutBanner === 'success'
+            ? 'Welcome to Pro! Your account has been upgraded.'
+            : 'Checkout canceled — you have not been charged.'}
+        </div>
+      )}
       {screen}
       <TweaksPanel title="Tweaks">
         <TweakSection label="Logo">

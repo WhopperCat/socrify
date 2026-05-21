@@ -19,4 +19,4 @@ bun.lock
 .gitignore
 
 # Internal docs not meant for the public site
-Socrify_Full_Product_Plan_v3.html
+docs/

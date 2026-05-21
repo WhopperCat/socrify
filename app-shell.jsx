@@ -20,6 +20,7 @@ const TEACHING_STYLES = [
   { id: 'guided',   label: 'Guided',    blurb: 'Mostly questions. Explains when you need it.' },
   { id: 'socratic', label: 'Socratic',  blurb: 'Pure questions. Never gives the answer.' },
   { id: 'direct',   label: 'Direct',    blurb: 'Teaches normally — but won\'t do your homework.' },
+  { id: 'teacher',  label: 'Teacher',   blurb: 'Teaches the subject from scratch, like a real class.' },
 ];
 const DIFFICULTIES = ['Easier', 'Standard', 'Challenging'];
 
@@ -87,6 +88,7 @@ Guidelines:
     guided:   'Guide with a mix of questions and brief explanations. Explain when the student is genuinely stuck, but always aim to restore their agency.',
     socratic: 'Use only questions — never give the answer directly. If the student asks for the answer, respond with a question that helps them discover it themselves.',
     direct:   'Teach clearly and explain concepts fully, but never complete assignments for the student.',
+    teacher:  'Teach the subject from scratch, as if the student is encountering it for the first time. Start from the foundations and build up systematically: define key terms in plain language, motivate why each idea matters, walk through worked examples, and check understanding with a short question before moving on. Assume zero prior knowledge unless the student says otherwise, and offer to recap or slow down whenever they seem lost.',
   }[teachingStyle] || '';
 
   const difficultyGuide = {
@@ -510,7 +512,7 @@ function Sidebar({ subject, setSubject, difficulty, setDifficulty, teachingStyle
         <div className="eyebrow" style={{ marginBottom: 8, paddingLeft: 4 }}>Teaching style</div>
         <div className="seg" style={{ width: '100%', padding: 3 }}>
           {TEACHING_STYLES.map(t => (
-            <button key={t.id} onClick={() => setTeachingStyle(t.id)} className={teachingStyle === t.id ? 'is-active' : ''} style={{ flex: 1, fontSize: 11.5, padding: '6px 4px' }}>
+            <button key={t.id} onClick={() => setTeachingStyle(t.id)} className={teachingStyle === t.id ? 'is-active' : ''} style={{ flex: 1, fontSize: 11, padding: '6px 2px' }}>
               {t.label}
             </button>
           ))}

@@ -358,6 +358,12 @@ const labelStyle = { display: 'block', fontSize: 13, fontWeight: 500, marginBott
 const INTERESTS = ['Gaming','Music','Sports','Tech','Art','Movies','Reading','Outdoors','Cooking','Fashion','Animals','Cars'];
 const STRENGTHS = ['Math','Writing','Science','History','Languages','Art','Coding','Memorization','Problem-solving','Public speaking'];
 const GRADES = ['Middle School','9th Grade','10th Grade','11th Grade','12th Grade','College','Adult Learner'];
+const ONBOARDING_TEACHING_STYLES = [
+  { id: 'guided',   label: 'Guided',   blurb: 'Mostly questions, with explanations when I need them. A good default.' },
+  { id: 'socratic', label: 'Socratic', blurb: 'Pure questions — never gives the answer. Pushes me to figure it out.' },
+  { id: 'direct',   label: 'Direct',   blurb: 'Teach me clearly and fully — but don\'t do my homework for me.' },
+  { id: 'teacher',  label: 'Teacher',  blurb: 'Teach the subject from scratch. Assume I know nothing and build it up.' },
+];
 
 function Onboarding({ onDone, settingsProps, variant }) {
   const [step, setStep] = useState(0);
@@ -366,6 +372,7 @@ function Onboarding({ onDone, settingsProps, variant }) {
     grade_level: '',
     interests: [],
     strengths: [],
+    teaching_style: '',
     experiences: '',
   });
 
@@ -405,6 +412,35 @@ function Onboarding({ onDone, settingsProps, variant }) {
       ),
       ok: () => data.strengths.length > 0,
     },
+    { key: 'style', title: 'How should I teach you?', subtitle: 'Pick a default teaching style. You can change it any time from the sidebar.',
+      render: () => (
+        <div style={{ display: 'grid', gap: 10 }}>
+          {ONBOARDING_TEACHING_STYLES.map(t => {
+            const selected = data.teaching_style === t.id;
+            return (
+              <button key={t.id} type="button"
+                onClick={() => setData({ ...data, teaching_style: t.id })}
+                style={{
+                  textAlign: 'left',
+                  padding: '14px 16px',
+                  borderRadius: 12,
+                  border: '1px solid ' + (selected ? 'var(--accent)' : 'var(--border)'),
+                  background: selected ? 'var(--accent-soft)' : 'var(--surface)',
+                  color: selected ? 'var(--accent-ink)' : 'var(--text)',
+                  cursor: 'pointer',
+                  transition: 'all .15s ease',
+                  display: 'flex', flexDirection: 'column', gap: 4,
+                  fontFamily: 'inherit',
+                }}>
+                <span style={{ fontSize: 15, fontWeight: 600 }}>{t.label}</span>
+                <span style={{ fontSize: 13, color: selected ? 'var(--accent-ink)' : 'var(--text-2)', opacity: selected ? 0.85 : 1 }}>{t.blurb}</span>
+              </button>
+            );
+          })}
+        </div>
+      ),
+      ok: () => !!data.teaching_style,
+    },
     { key: 'experiences', title: 'Anything else you\'ve done?', subtitle: 'Classes you\'ve taken, things you\'re learning, side projects. Optional.',
       render: () => (
         <textarea className="field" style={{ minHeight: 130 }}
@@ -418,7 +454,16 @@ function Onboarding({ onDone, settingsProps, variant }) {
 
   const cur = steps[step];
   const pct = ((step + 1) / steps.length) * 100;
-  const next = () => { if (!cur.ok()) return; if (step < steps.length - 1) setStep(step + 1); else onDone(); };
+  const finish = () => {
+    try {
+      const prev = JSON.parse(localStorage.getItem('socrify_prefs') || '{}');
+      const nextPrefs = { ...prev };
+      if (data.teaching_style) nextPrefs.teachingStyle = data.teaching_style;
+      localStorage.setItem('socrify_prefs', JSON.stringify(nextPrefs));
+    } catch {}
+    onDone();
+  };
+  const next = () => { if (!cur.ok()) return; if (step < steps.length - 1) setStep(step + 1); else finish(); };
   const back = () => step > 0 && setStep(step - 1);
 
   return (

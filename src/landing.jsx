@@ -259,6 +259,9 @@ function Auth({ onBack, onSuccess, settingsProps, variant }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const authStatus = window.__SOCRIFY_AUTH_STATUS__ || { ok: !!window.sb };
+  const authDisabled = !authStatus.ok;
+
   const submit = async (e) => {
     e.preventDefault();
     setError('');
@@ -337,6 +340,17 @@ function Auth({ onBack, onSuccess, settingsProps, variant }) {
             <input type="password" className="field" value={password} onChange={e => setPassword(e.target.value)} autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} placeholder="••••••••" style={{ marginBottom: 14 }} />
 
 
+            {authDisabled && (
+              <div role="alert" style={{
+                background: 'oklch(0.95 0.04 25)', color: 'var(--danger)',
+                padding: '10px 12px', borderRadius: 10, fontSize: 13, marginBottom: 12,
+                lineHeight: 1.4,
+              }}>
+                <strong>Sign-in is temporarily unavailable.</strong>
+                {authStatus.reason ? <div style={{ opacity: 0.85, marginTop: 4 }}>{authStatus.reason}</div> : null}
+              </div>
+            )}
+
             {error && (
               <div style={{
                 background: 'oklch(0.95 0.04 25)', color: 'var(--danger)',
@@ -344,7 +358,7 @@ function Auth({ onBack, onSuccess, settingsProps, variant }) {
               }}>{error}</div>
             )}
 
-            <button type="submit" disabled={loading} className="btn btn-accent btn-lg" style={{ width: '100%' }}>
+            <button type="submit" disabled={loading || authDisabled} className="btn btn-accent btn-lg" style={{ width: '100%' }}>
               {loading ? 'Working…' : (mode === 'signin' ? 'Sign in' : 'Create account')}
             </button>
 

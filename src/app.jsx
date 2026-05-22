@@ -8,6 +8,22 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "startView": "landing"
 }/*EDITMODE-END*/;
 
+const VIEW_TO_PATH = {
+  landing: '/',
+  auth: '/auth',
+  onboarding: '/onboarding',
+  dashboard: '/dashboard',
+};
+const PATH_TO_VIEW = {
+  '/': 'landing',
+  '/auth': 'auth',
+  '/onboarding': 'onboarding',
+  '/dashboard': 'dashboard',
+};
+function viewFromLocation() {
+  return PATH_TO_VIEW[window.location.pathname] || 'landing';
+}
+
 function Root() {
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
 
@@ -16,7 +32,25 @@ function Root() {
     document.documentElement.style.setProperty('--accent-hue', tweaks.accentHue);
   }, [tweaks.accentHue]);
 
-  const [view, setView] = React.useState(tweaks.startView || 'landing');
+  const [view, setViewState] = React.useState(viewFromLocation);
+  const navigate = React.useCallback((nextView) => {
+    const path = VIEW_TO_PATH[nextView] || '/';
+    if (window.location.pathname !== path) {
+      window.history.pushState(null, '', path + window.location.search + window.location.hash);
+    }
+    setViewState(nextView);
+  }, []);
+  // Canonicalise unknown initial paths (e.g. /foo) to /.
+  React.useEffect(() => {
+    if (!PATH_TO_VIEW[window.location.pathname]) {
+      window.history.replaceState(null, '', '/' + window.location.search + window.location.hash);
+    }
+  }, []);
+  React.useEffect(() => {
+    const onPop = () => setViewState(viewFromLocation());
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   const [theme, setTheme] = React.useState(() => localStorage.getItem('socrify_theme') || 'light');
   const [dyslexic, setDyslexic] = React.useState(() => localStorage.getItem('socrify_dyslexic') === '1');
   const [fontSize, setFontSize] = React.useState(() => Number(localStorage.getItem('socrify_fontsize')) || 100);
@@ -47,22 +81,22 @@ function Root() {
 
   const settingsProps = { theme, setTheme, dyslexic, setDyslexic, fontSize, setFontSize, reduceMotion, setReduceMotion };
 
-  const goLanding   = () => { setIsGuest(false); setView('landing'); };
-  const goAuth      = () => setView('auth');
-  const goGuest     = () => { setIsGuest(true); setView('dashboard'); };
+  const goLanding   = () => { setIsGuest(false); navigate('landing'); };
+  const goAuth      = () => navigate('auth');
+  const goGuest     = () => { setIsGuest(true); navigate('dashboard'); };
   // After signup we send users through onboarding; after signin straight to dashboard.
-  const onAuthOk    = (mode) => { setIsGuest(false); setView(mode === 'signup' ? 'onboarding' : 'dashboard'); };
-  const onOnboarded = () => setView('dashboard');
+  const onAuthOk    = (mode) => { setIsGuest(false); navigate(mode === 'signup' ? 'onboarding' : 'dashboard'); };
+  const onOnboarded = () => navigate('dashboard');
   const logout      = async () => {
     await authSignOut();
     setIsGuest(false);
-    setView('landing');
+    navigate('landing');
   };
 
   // If a real session is detected on first load (returning user), jump into the dashboard.
   React.useEffect(() => {
     if (!auth.ready) return;
-    if (auth.user && view === 'landing') setView('dashboard');
+    if (auth.user && view === 'landing') navigate('dashboard');
   }, [auth.ready, auth.user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle Stripe redirect — show a brief banner and refresh tier state.
@@ -203,12 +237,7 @@ function Root() {
               { id: 'onboarding', label: 'Onboarding' },
               { id: 'dashboard',  label: 'Dashboard' },
             ].map(s => (
-              <button key={s.id} onClick={() => {
-                if (s.id === 'dashboard' && !profile) {
-                  setProfile({ first_name: 'Alex' });
-                }
-                setView(s.id);
-              }} style={{
+              <button key={s.id} onClick={() => navigate(s.id)} style={{
                 padding: '8px 10px', borderRadius: 8,
                 background: view === s.id ? 'var(--accent-soft)' : 'var(--surface-2)',
                 border: '1px solid ' + (view === s.id ? 'var(--accent)' : 'var(--border)'),

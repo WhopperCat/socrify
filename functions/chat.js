@@ -584,8 +584,8 @@ export async function createStripeCheckout({ request, env }) {
   const params = {
     mode: 'subscription',
     line_items: [{ price: env.STRIPE_PRO_PRICE_ID, quantity: 1 }],
-    success_url: `${origin}/?checkout=success`,
-    cancel_url: `${origin}/?checkout=canceled`,
+    success_url: `${origin}/dashboard?checkout=success`,
+    cancel_url: `${origin}/dashboard?checkout=canceled`,
     client_reference_id: user.id,
     ...(sub?.stripe_customer_id
       ? { customer: sub.stripe_customer_id }
@@ -626,7 +626,7 @@ export async function createStripePortal({ request, env }) {
   const origin = new URL(request.url).origin;
   const portal = await stripeReq('billing_portal/sessions', 'POST', {
     customer: sub.stripe_customer_id,
-    return_url: `${origin}/`,
+    return_url: `${origin}/dashboard`,
   }, env.STRIPE_SECRET_KEY);
 
   if (!portal.url) {

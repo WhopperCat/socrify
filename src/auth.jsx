@@ -2,23 +2,52 @@
    Socrify · Supabase auth + tier state + API helpers
    ========================================================= */
 
+// Diagnostic state surfaced to the UI so users see *why* auth is disabled
+// instead of the generic "Auth not configured". Mirrors what bootSupabase()
+// found: `ok` → client built, otherwise `reason` describes the gap.
+window.__SOCRIFY_AUTH_STATUS__ = { ok: false, reason: 'pending' };
+
 (function bootSupabase() {
   const cfg = window.__SOCRIFY_CONFIG__ || {};
-  if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
-    console.warn('Supabase config missing — auth will be disabled.');
+  const missing = [];
+  if (!cfg.supabaseUrl) missing.push('SUPABASE_URL');
+  if (!cfg.supabaseAnonKey) missing.push('SUPABASE_ANON_KEY');
+  if (missing.length) {
+    const reason = `Missing server config: ${missing.join(', ')}`;
+    window.__SOCRIFY_AUTH_STATUS__ = { ok: false, reason, missing };
+    console.warn(`Supabase config missing (${missing.join(', ')}) — auth disabled. Set these Worker secrets and redeploy.`);
     return;
   }
-  if (window.sb) return;
-  // The UMD bundle exposes `supabase` globally.
-  // eslint-disable-next-line no-undef
-  window.sb = supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
-  });
+  if (typeof supabase === 'undefined' || !supabase?.createClient) {
+    window.__SOCRIFY_AUTH_STATUS__ = { ok: false, reason: 'Supabase JS library failed to load' };
+    console.warn('Supabase UMD bundle did not load — auth disabled.');
+    return;
+  }
+  if (window.sb) {
+    window.__SOCRIFY_AUTH_STATUS__ = { ok: true };
+    return;
+  }
+  try {
+    // eslint-disable-next-line no-undef
+    window.sb = supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+    });
+    window.__SOCRIFY_AUTH_STATUS__ = { ok: true };
+  } catch (err) {
+    window.__SOCRIFY_AUTH_STATUS__ = { ok: false, reason: err?.message || 'createClient failed' };
+    console.warn('Supabase createClient threw — auth disabled.', err);
+  }
 })();
+
+function authNotConfiguredError() {
+  const status = window.__SOCRIFY_AUTH_STATUS__ || {};
+  const detail = status.reason ? ` (${status.reason})` : '';
+  return { error: { message: `Sign-in is temporarily unavailable${detail}. Please try again later.` } };
+}
 
 /* ── auth helpers ── */
 async function authSignUp({ email, password, firstName }) {
-  if (!window.sb) return { error: { message: 'Auth not configured' } };
+  if (!window.sb) return authNotConfiguredError();
   return window.sb.auth.signUp({
     email,
     password,
@@ -27,7 +56,7 @@ async function authSignUp({ email, password, firstName }) {
 }
 
 async function authSignIn({ email, password }) {
-  if (!window.sb) return { error: { message: 'Auth not configured' } };
+  if (!window.sb) return authNotConfiguredError();
   return window.sb.auth.signInWithPassword({ email, password });
 }
 

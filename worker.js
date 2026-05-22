@@ -65,6 +65,12 @@ export default {
         supabaseAnonKey: env.SUPABASE_ANON_KEY || '',
         stripePublishableKey: env.STRIPE_PUBLISHABLE_KEY || '',
       };
+      const missing = [];
+      if (!cfg.supabaseUrl) missing.push('SUPABASE_URL');
+      if (!cfg.supabaseAnonKey) missing.push('SUPABASE_ANON_KEY');
+      if (missing.length) {
+        console.warn(`[config.js] Missing Worker secrets: ${missing.join(', ')} — auth will be disabled on the client.`);
+      }
       return new Response(
         `window.__SOCRIFY_CONFIG__ = ${JSON.stringify(cfg)};`,
         {

@@ -46,7 +46,10 @@ async function authSignUp({ email, password, firstName }) {
   return window.sb.auth.signUp({
     email,
     password,
-    options: { data: { first_name: firstName || null } },
+    options: {
+      data: { first_name: firstName || null },
+      emailRedirectTo: window.location.origin,
+    },
   });
 }
 

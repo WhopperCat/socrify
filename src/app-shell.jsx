@@ -167,7 +167,7 @@ async function processFiles(fileList) {
   const results = [];
   for (const file of fileList) {
     if (file.size > MAX_ATTACH_BYTES) {
-      alert(`"${file.name}" exceeds the 10 MB limit — please try a smaller file.`);
+      window.toast?.error(`"${file.name}" exceeds the 10 MB limit — please try a smaller file.`);
       continue;
     }
     const att = await new Promise((resolve, reject) => {
@@ -658,7 +658,7 @@ function Dashboard({ displayName, subject, setSubject, difficulty, teachingStyle
     try {
       const processed = await processFiles(files);
       setAttachments(prev => [...prev, ...processed]);
-    } catch (e) { alert('File error: ' + e.message); }
+    } catch (e) { window.toast?.error('File error: ' + e.message); }
   };
 
   const recentItems = history.slice(0, 3);

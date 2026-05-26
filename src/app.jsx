@@ -106,6 +106,10 @@ function Root() {
       const isNewUser = accountAgeMs < 60 * 60 * 1000;
       navigate(hasOnboarded || !isNewUser ? 'dashboard' : 'onboarding');
     }
+    // Direct/refreshed load on /dashboard with no session → treat as a guest.
+    if (auth.ready && !auth.user && view === 'dashboard' && !isGuest) {
+      setIsGuest(true);
+    }
   }, [auth.ready, auth.user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle Stripe redirect — show a brief banner and refresh tier state.

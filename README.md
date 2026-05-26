@@ -1,6 +1,6 @@
 # Socrify
 
-Socratic AI tutoring platform. A single-page React app served by a Cloudflare Worker that proxies Anthropic's API and talks to Supabase for auth, persistence, and usage gating.
+Socratic AI tutoring platform. A single-page React app served by a Cloudflare Worker that proxies Anthropic's API and talks to Supabase for auth, persistence, and usage gating. 
 
 ## Stack
 

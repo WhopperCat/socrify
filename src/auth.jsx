@@ -91,15 +91,27 @@ function useAuthSession() {
   return { ...state, refresh };
 }
 
-/* ── authed fetch ── */
-function authedFetch(url, { method = 'GET', body, accessToken, headers = {} } = {}) {
+/* ── authed fetch (with one-shot refresh + retry on 401) ──
+   If a token expires between auth-state read and request, Supabase's
+   background autoRefreshToken may not have run yet. On 401 we ask Supabase
+   for a fresh access token and replay the request once. */
+async function authedFetch(url, { method = 'GET', body, accessToken, headers = {}, _retried = false } = {}) {
   const h = { 'Content-Type': 'application/json', ...headers };
   if (accessToken) h.Authorization = `Bearer ${accessToken}`;
-  return fetch(url, {
+  const res = await fetch(url, {
     method,
     headers: h,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+  if (res.status !== 401 || _retried || !accessToken || !window.sb) return res;
+  try {
+    const { data, error } = await window.sb.auth.refreshSession();
+    const newToken = data?.session?.access_token;
+    if (error || !newToken || newToken === accessToken) return res;
+    return authedFetch(url, { method, body, accessToken: newToken, headers, _retried: true });
+  } catch {
+    return res;
+  }
 }
 
 async function apiStartSession({ accessToken, mode, subject, conversationId }) {

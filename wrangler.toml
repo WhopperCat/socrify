@@ -20,7 +20,7 @@ workers_dev = true
 # STRIPE_PRO_PRICE_ID          price_1TZcx5H8M5NDocU6W9hPIOrA  (sandbox)
 #
 # One-time Supabase dashboard step: Authentication → Providers → Email →
-# turn OFF "Confirm email" so signups work without an inbox round-trip during the beta.
+# turn ON "Confirm email" so every new account must verify their address before access.
 
 [assets]
 directory = "."

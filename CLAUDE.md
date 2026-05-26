@@ -115,7 +115,7 @@ Two migrations in `supabase/migrations/`:
 - `profiles`, `subscriptions`, `usage_logs` — RLS owner-read on profiles/subscriptions; `usage_logs` has RLS enabled with **no policies**, so anon/auth roles can't see it. The chat function reads it via the service role key, which bypasses RLS.
 - `handle_new_user` trigger on `auth.users` insert auto-creates a `profiles` row and a free `subscriptions` row.
 
-**Supabase dashboard setup:** Authentication → Providers → Email → turn **off** "Confirm email" so beta signups work without an inbox round-trip (noted in `wrangler.toml`).
+**Supabase dashboard setup:** Authentication → Providers → Email → turn **on** "Confirm email" so every new account must verify their address. The frontend shows a "check your inbox" screen after signup and handles the redirect-back via `detectSessionInUrl: true`.
 
 ### Stripe billing
 

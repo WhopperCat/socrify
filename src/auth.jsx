@@ -12,7 +12,7 @@
   // The UMD bundle exposes `supabase` globally.
   // eslint-disable-next-line no-undef
   window.sb = supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
   });
 })();
 
@@ -34,6 +34,11 @@ async function authSignIn({ email, password }) {
 async function authSignOut() {
   if (!window.sb) return;
   await window.sb.auth.signOut();
+}
+
+async function authResend({ email }) {
+  if (!window.sb) return { error: { message: 'Auth not configured' } };
+  return window.sb.auth.resend({ type: 'signup', email });
 }
 
 async function fetchProfileBundle(userId) {
@@ -156,7 +161,7 @@ async function apiOpenBillingPortal({ accessToken }) {
 }
 
 Object.assign(window, {
-  authSignUp, authSignIn, authSignOut, fetchProfileBundle,
+  authSignUp, authSignIn, authSignOut, authResend, fetchProfileBundle,
   useAuthSession, authedFetch,
   apiStartSession, apiGetUsage, apiSetDevTier,
   apiCreateCheckoutSession, apiOpenBillingPortal,

@@ -252,12 +252,20 @@ function DialoguePreview() {
    AUTH
    =========================================================== */
 function Auth({ onBack, onSuccess, settingsProps, variant }) {
-  const [mode, setMode] = useState('signin');
+  const [mode, setMode] = useState('signin'); // 'signin' | 'signup' | 'verify'
   const [firstName, setFirstName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [resendIn, setResendIn] = useState(0);
+  const [resendBusy, setResendBusy] = useState(false);
+
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setTimeout(() => setResendIn(r => r - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -271,17 +279,78 @@ function Auth({ onBack, onSuccess, settingsProps, variant }) {
     }
     setLoading(true);
     try {
-      const { error: authErr } = mode === 'signup'
-        ? await authSignUp({ email: email.trim(), password, firstName: firstName.trim() })
-        : await authSignIn({ email: email.trim(), password });
-      if (authErr) { setError(authErr.message); return; }
-      onSuccess(mode);
+      if (mode === 'signup') {
+        const { data, error: authErr } = await authSignUp({ email: email.trim(), password, firstName: firstName.trim() });
+        if (authErr) { setError(authErr.message); return; }
+        if (data?.session) {
+          // Email confirmation is disabled (e.g. dev env) — session is live immediately.
+          onSuccess('signup');
+        } else {
+          // Supabase sent a confirmation email; wait for the user to click it.
+          setMode('verify');
+          setResendIn(60);
+        }
+      } else {
+        const { error: authErr } = await authSignIn({ email: email.trim(), password });
+        if (authErr) { setError(authErr.message); return; }
+        onSuccess('signin');
+      }
     } catch (err) {
       setError(err?.message || 'Something went wrong. Try again.');
     } finally {
       setLoading(false);
     }
   };
+
+  const handleResend = async () => {
+    if (resendIn > 0 || resendBusy) return;
+    setResendBusy(true);
+    try {
+      await authResend({ email });
+      setResendIn(60);
+    } catch {}
+    finally { setResendBusy(false); }
+  };
+
+  if (mode === 'verify') {
+    return (
+      <div className="bg-paper grain" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        <TopNav variant={variant} right={<SettingsCluster {...settingsProps} compact />} />
+        <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 24px' }}>
+          <div className="card-lg fade-in-up" style={{ maxWidth: 460, width: '100%', padding: 40, textAlign: 'center' }}>
+            <div style={{ fontSize: 52, marginBottom: 20, lineHeight: 1 }}>✉️</div>
+            <h1 className="display" style={{ fontSize: 'clamp(26px, 3vw, 34px)', margin: '0 0 14px', lineHeight: 1.1 }}>
+              Check your inbox
+            </h1>
+            <p style={{ fontSize: 15, color: 'var(--text-2)', lineHeight: 1.55, margin: '0 0 28px' }}>
+              We sent a verification link to{' '}
+              <strong style={{ color: 'var(--text)' }}>{email}</strong>.
+              <br />Click it to activate your account and continue.
+            </p>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 28px', lineHeight: 1.5 }}>
+              Didn't get it? Check your spam folder, or{' '}
+              <button
+                onClick={handleResend}
+                disabled={resendIn > 0 || resendBusy}
+                className="btn btn-bare btn-sm"
+                style={{ padding: '0 2px', fontSize: 13, display: 'inline', verticalAlign: 'baseline' }}
+              >
+                {resendBusy ? 'Sending…' : resendIn > 0 ? `resend in ${resendIn}s` : 'resend'}
+              </button>.
+            </p>
+            <button
+              type="button"
+              onClick={() => { setMode('signin'); setError(''); }}
+              className="btn btn-bare btn-sm"
+              style={{ paddingLeft: 0 }}
+            >
+              ← Back to sign in
+            </button>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-paper grain" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', position: 'relative' }}>

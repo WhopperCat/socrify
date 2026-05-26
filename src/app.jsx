@@ -86,17 +86,26 @@ function Root() {
   const goGuest     = () => { setIsGuest(true); navigate('dashboard'); };
   // After signup we send users through onboarding; after signin straight to dashboard.
   const onAuthOk    = (mode) => { setIsGuest(false); navigate(mode === 'signup' ? 'onboarding' : 'dashboard'); };
-  const onOnboarded = () => navigate('dashboard');
+  const onOnboarded = () => {
+    if (auth.user) localStorage.setItem('socrify_onboarded_' + auth.user.id, '1');
+    navigate('dashboard');
+  };
   const logout      = async () => {
     await authSignOut();
     setIsGuest(false);
     navigate('landing');
   };
 
-  // If a real session is detected on first load (returning user), jump into the dashboard.
+  // When a session appears (returning user, or email confirmation redirect), route appropriately.
+  // New users (account < 1 hour old) who haven't finished onboarding go there first.
   React.useEffect(() => {
     if (!auth.ready) return;
-    if (auth.user && view === 'landing') navigate('dashboard');
+    if (auth.user && (view === 'landing' || view === 'auth')) {
+      const hasOnboarded = localStorage.getItem('socrify_onboarded_' + auth.user.id);
+      const accountAgeMs = Date.now() - new Date(auth.user.created_at).getTime();
+      const isNewUser = accountAgeMs < 60 * 60 * 1000;
+      navigate(hasOnboarded || !isNewUser ? 'dashboard' : 'onboarding');
+    }
   }, [auth.ready, auth.user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle Stripe redirect — show a brief banner and refresh tier state.

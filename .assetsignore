@@ -17,6 +17,8 @@ package-lock.json
 bun.lock
 .assetsignore
 .gitignore
+deploy.sh
+scripts/
 
 # Internal docs not meant for the public site
 docs/

@@ -305,11 +305,19 @@ function Auth({ onBack, onSuccess, settingsProps, variant }) {
   const handleResend = async () => {
     if (resendIn > 0 || resendBusy) return;
     setResendBusy(true);
+    setError('');
     try {
-      await authResend({ email });
-      setResendIn(60);
-    } catch {}
-    finally { setResendBusy(false); }
+      const { error: resendErr } = await authResend({ email: email.trim() });
+      if (resendErr) {
+        setError(resendErr.message);
+      } else {
+        setResendIn(60);
+      }
+    } catch (err) {
+      setError(err?.message || 'Something went wrong. Try again.');
+    } finally {
+      setResendBusy(false);
+    }
   };
 
   if (mode === 'verify') {
@@ -338,6 +346,12 @@ function Auth({ onBack, onSuccess, settingsProps, variant }) {
                 {resendBusy ? 'Sending…' : resendIn > 0 ? `resend in ${resendIn}s` : 'resend'}
               </button>.
             </p>
+            {error && (
+              <div style={{
+                background: 'oklch(0.95 0.04 25)', color: 'var(--danger)',
+                padding: '10px 12px', borderRadius: 10, fontSize: 13, marginBottom: 16,
+              }}>{error}</div>
+            )}
             <button
               type="button"
               onClick={() => { setMode('signin'); setError(''); }}

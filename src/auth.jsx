@@ -2,23 +2,47 @@
    Socrify · Supabase auth + tier state + API helpers
    ========================================================= */
 
-(function bootSupabase() {
+// Reason for missing client, so callers can surface a useful message.
+window.__SUPABASE_BOOT_ERROR__ = null;
+
+function bootSupabase() {
+  if (window.sb) return window.sb;
   const cfg = window.__SOCRIFY_CONFIG__ || {};
   if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
-    console.warn('Supabase config missing — auth will be disabled.');
-    return;
+    window.__SUPABASE_BOOT_ERROR__ = !window.__SOCRIFY_CONFIG__
+      ? 'config_not_loaded'
+      : 'config_missing_keys';
+    return null;
   }
-  if (window.sb) return;
-  // The UMD bundle exposes `supabase` globally.
+  if (typeof supabase === 'undefined' || !supabase.createClient) {
+    window.__SUPABASE_BOOT_ERROR__ = 'sdk_not_loaded';
+    return null;
+  }
+  window.__SUPABASE_BOOT_ERROR__ = null;
   // eslint-disable-next-line no-undef
   window.sb = supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
   });
-})();
+  return window.sb;
+}
+
+function authNotReadyError() {
+  bootSupabase();
+  const reason = window.__SUPABASE_BOOT_ERROR__;
+  const message =
+    reason === 'config_not_loaded' ? 'Auth is offline — could not load app config. Please refresh the page.' :
+    reason === 'config_missing_keys' ? 'Auth is not configured for this deployment. Please contact support.' :
+    reason === 'sdk_not_loaded' ? 'Auth library failed to load. Check your network and refresh.' :
+    'Auth is unavailable right now. Please refresh and try again.';
+  console.error('[auth] supabase unavailable:', reason || 'unknown');
+  return { error: { message, code: reason || 'auth_unavailable' } };
+}
+
+bootSupabase();
 
 /* ── auth helpers ── */
 async function authSignUp({ email, password, firstName }) {
-  if (!window.sb) return { error: { message: 'Auth not configured' } };
+  if (!bootSupabase()) return authNotReadyError();
   return window.sb.auth.signUp({
     email,
     password,
@@ -27,7 +51,7 @@ async function authSignUp({ email, password, firstName }) {
 }
 
 async function authSignIn({ email, password }) {
-  if (!window.sb) return { error: { message: 'Auth not configured' } };
+  if (!bootSupabase()) return authNotReadyError();
   return window.sb.auth.signInWithPassword({ email, password });
 }
 
@@ -37,7 +61,7 @@ async function authSignOut() {
 }
 
 async function authResend({ email }) {
-  if (!window.sb) return { error: { message: 'Auth not configured' } };
+  if (!bootSupabase()) return authNotReadyError();
   return window.sb.auth.resend({ type: 'signup', email });
 }
 

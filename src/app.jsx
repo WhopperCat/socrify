@@ -183,6 +183,7 @@ function Root() {
         </div>
       )}
       {screen}
+      <ToastHost />
       <TweaksPanel title="Tweaks">
         <TweakSection label="Logo">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 6 }}>

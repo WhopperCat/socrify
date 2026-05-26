@@ -785,7 +785,7 @@ function UpgradeModal({ open, onClose, tier, isDev, accessToken, onTierChange, o
         await onTierChange?.();
         onClose();
       } else {
-        alert('Could not change tier — check the console.');
+        window.toast?.error('Could not change tier — check the console.');
       }
     } finally {
       setBusy(false);
